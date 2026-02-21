@@ -1,0 +1,54 @@
+[project]
+name = "openenv-microvm"
+version = "0.1.0"
+description = "Convert OpenEnv environments to Firecracker microVMs for ultra-fast RL training"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["openenv", "microvm", "firecracker", "reinforcement-learning", "containers"]
+authors = [
+    { name = "Zach Wentz" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "openenv-core>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+openenv-microvm = "openenv_microvm.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/zkwentz/openenv-microvm"
+Repository = "https://github.com/zkwentz/openenv-microvm"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openenv_microvm"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
