@@ -1,0 +1,39 @@
+[package]
+name = "openenv-microvm"
+version = "0.1.0"
+edition = "2021"
+authors = ["OpenEnv Contributors"]
+description = "Convert OpenEnv environments to Firecracker microVMs for ultra-fast startup and secure isolation"
+license = "MIT"
+repository = "https://github.com/zwentz-macmini/openenv-microvm"
+keywords = ["microvm", "firecracker", "openenv", "virtualization", "rl"]
+categories = ["command-line-utilities", "virtualization"]
+readme = "README.md"
+
+[[bin]]
+name = "openenv-microvm"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+uuid = { version = "1.6", features = ["v4"] }
+tempfile = "3.10"
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+hyper = { version = "1.1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
+http-body-util = "0.1"
+tokio-util = "0.7"
+hyperlocal = "0.9"
+nix = { version = "0.29", features = ["signal"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+assert_cmd = "2.0"
+predicates = "3.1"
