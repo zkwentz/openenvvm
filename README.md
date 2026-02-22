@@ -10,7 +10,7 @@ Written in Rust for maximum performance and reliability.
 
 ## Latest Benchmark Results
 
-*Last updated: 2026-02-22 04:28 UTC*
+*Last updated: 2026-02-22 12:14 UTC*
 
 | Provider | Time | Tool Calls | Errors | Score | Grade |
 |----------|------|------------|--------|-------|-------|
@@ -21,6 +21,8 @@ Written in Rust for maximum performance and reliability.
 
 > Benchmarks run automatically in CI using [sandbox-bench](https://github.com/zkwentz/sandbox-bench).
 > See [workflow runs](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml) for details.
+
+## Performance
 
 ## Performance
 
