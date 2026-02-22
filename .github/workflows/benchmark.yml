@@ -1,72 +1,55 @@
-name: Benchmark Docker vs MicroVM
+name: Benchmark All Providers
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
   schedule:
-    # Run weekly on Sundays at midnight
-    - cron: '0 0 * * 0'
+    # Run daily at midnight
+    - cron: '0 0 * * *'
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Build the openenvvm binary
-  build-binary:
+  benchmark:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release
-        run: cargo build --release
+      - name: Build openenvvm
+        run: |
+          cargo build --release
+          sudo cp target/release/openenvvm /usr/local/bin/
 
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          name: openenvvm-binary
-          path: target/release/openenvvm
-          retention-days: 1
+          python-version: '3.11'
 
-  # Benchmark each environment
-  benchmark:
-    needs: build-binary
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        env:
-          - echo_env
-          - chat_env
-          - connect4_env
-          - grid_world_env
-          - maze_env
-          - snake_env
-
-    steps:
-      - uses: actions/checkout@v4
+      - name: Install sandbox-bench
+        run: |
+          pip install git+https://github.com/zkwentz/sandbox-bench.git@feature/openenv-providers
+          pip install requests
 
       - name: Check KVM availability
         id: kvm
         run: |
           if [ -e /dev/kvm ]; then
             echo "available=true" >> $GITHUB_OUTPUT
-            ls -la /dev/kvm
+            sudo chmod 666 /dev/kvm
+            sudo usermod -aG kvm $USER
           else
             echo "available=false" >> $GITHUB_OUTPUT
-            echo "KVM is NOT available"
           fi
-
-      - name: Setup KVM permissions
-        if: steps.kvm.outputs.available == 'true'
-        run: |
-          sudo chmod 666 /dev/kvm
-          sudo usermod -aG kvm $USER
 
       - name: Install Firecracker
         if: steps.kvm.outputs.available == 'true'
@@ -76,37 +59,18 @@ jobs:
           sudo mv release-v1.6.0-${ARCH}/firecracker-v1.6.0-${ARCH} /usr/local/bin/firecracker
           firecracker --version
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install requests
-
-      - name: Download binary
-        uses: actions/download-artifact@v4
-        with:
-          name: openenvvm-binary
-          path: ./bin
-
-      - name: Make binary executable
-        run: chmod +x ./bin/openenvvm
-
       - name: Checkout OpenEnv
         uses: actions/checkout@v4
         with:
           repository: meta-pytorch/OpenEnv
           path: OpenEnv
 
-      - name: Build Docker image for ${{ matrix.env }}
-        id: docker_build
+      - name: Build echo_env Docker image
         run: |
-          cd OpenEnv/envs/${{ matrix.env }}
+          cd OpenEnv/envs/echo_env
 
-          # Check if Dockerfile exists, if not create one
           if [ ! -f Dockerfile ]; then
-            cat > Dockerfile << 'DOCKERFILE'
+            cat > Dockerfile << 'EOF'
           FROM python:3.11-slim
           WORKDIR /app
           COPY . /app/env
@@ -114,195 +78,206 @@ jobs:
           RUN if [ -f /app/env/server/requirements.txt ]; then pip install -r /app/env/server/requirements.txt; fi
           EXPOSE 8000
           CMD ["uvicorn", "env.server.app:app", "--host", "0.0.0.0", "--port", "8000"]
-          DOCKERFILE
-          fi
-
-          docker build -t ${{ matrix.env }}:latest .
-          echo "image=${{ matrix.env }}:latest" >> $GITHUB_OUTPUT
-
-      - name: Convert to MicroVM
-        if: steps.kvm.outputs.available == 'true'
-        run: |
-          ./bin/openenvvm convert ./OpenEnv/envs/${{ matrix.env }} -o ${{ matrix.env }}.microvm
-
-      - name: Run Docker benchmark
-        id: docker_bench
-        run: |
-          echo "Running Docker benchmark for ${{ matrix.env }}..."
-
-          # Start container
-          START=$(date +%s%N)
-          CONTAINER_ID=$(docker run -d -p 8100:8000 ${{ matrix.env }}:latest)
-
-          # Wait for health
-          for i in {1..60}; do
-            if curl -sf http://localhost:8100/health > /dev/null 2>&1; then
-              break
-            fi
-            sleep 0.5
-          done
-          BOOT_TIME=$(( ($(date +%s%N) - $START) / 1000000 ))
-
-          # Test reset
-          START=$(date +%s%N)
-          curl -sf -X POST http://localhost:8100/reset -H "Content-Type: application/json" -d '{}' || true
-          RESET_TIME=$(( ($(date +%s%N) - $START) / 1000000 ))
-
-          # Cleanup
-          docker rm -f $CONTAINER_ID > /dev/null
-
-          echo "docker_boot_ms=$BOOT_TIME" >> $GITHUB_OUTPUT
-          echo "docker_reset_ms=$RESET_TIME" >> $GITHUB_OUTPUT
-          echo "Docker: boot=${BOOT_TIME}ms, reset=${RESET_TIME}ms"
-
-      - name: Run MicroVM benchmark
-        id: microvm_bench
-        if: steps.kvm.outputs.available == 'true'
-        run: |
-          echo "Running MicroVM benchmark for ${{ matrix.env }}..."
-
-          # Start VM
-          START=$(date +%s%N)
-          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 &
-          VM_PID=$!
-
-          # Wait for health
-          for i in {1..60}; do
-            if curl -sf http://172.16.0.2:8000/health > /dev/null 2>&1; then
-              break
-            fi
-            sleep 0.5
-          done
-          BOOT_TIME=$(( ($(date +%s%N) - $START) / 1000000 ))
-
-          # Test reset
-          START=$(date +%s%N)
-          curl -sf -X POST http://172.16.0.2:8000/reset -H "Content-Type: application/json" -d '{}' || true
-          RESET_TIME=$(( ($(date +%s%N) - $START) / 1000000 ))
-
-          # Cleanup
-          sudo kill $VM_PID 2>/dev/null || true
-
-          echo "microvm_boot_ms=$BOOT_TIME" >> $GITHUB_OUTPUT
-          echo "microvm_reset_ms=$RESET_TIME" >> $GITHUB_OUTPUT
-          echo "MicroVM: boot=${BOOT_TIME}ms, reset=${RESET_TIME}ms"
-
-      - name: Calculate speedup
-        id: speedup
-        run: |
-          DOCKER_BOOT=${{ steps.docker_bench.outputs.docker_boot_ms }}
-          MICROVM_BOOT=${{ steps.microvm_bench.outputs.microvm_boot_ms || '0' }}
-
-          if [ "$MICROVM_BOOT" != "0" ] && [ "$MICROVM_BOOT" != "" ]; then
-            SPEEDUP=$(echo "scale=2; $DOCKER_BOOT / $MICROVM_BOOT" | bc)
-            echo "boot_speedup=${SPEEDUP}x" >> $GITHUB_OUTPUT
-            echo "Boot speedup: ${SPEEDUP}x"
-          else
-            echo "boot_speedup=N/A" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Save benchmark result
-        run: |
-          mkdir -p benchmark-results
-          cat > benchmark-results/${{ matrix.env }}.json << EOF
-          {
-            "env": "${{ matrix.env }}",
-            "docker": {
-              "boot_ms": ${{ steps.docker_bench.outputs.docker_boot_ms }},
-              "reset_ms": ${{ steps.docker_bench.outputs.docker_reset_ms }}
-            },
-            "microvm": {
-              "boot_ms": ${{ steps.microvm_bench.outputs.microvm_boot_ms || 'null' }},
-              "reset_ms": ${{ steps.microvm_bench.outputs.microvm_reset_ms || 'null' }}
-            },
-            "speedup": "${{ steps.speedup.outputs.boot_speedup }}"
-          }
           EOF
-          cat benchmark-results/${{ matrix.env }}.json
-
-      - name: Upload benchmark result
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-${{ matrix.env }}
-          path: benchmark-results/${{ matrix.env }}.json
-          retention-days: 90
-
-  # Aggregate results and create summary
-  summary:
-    needs: benchmark
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all benchmark results
-        uses: actions/download-artifact@v4
-        with:
-          path: benchmark-results
-          pattern: benchmark-*
-          merge-multiple: true
-
-      - name: Generate summary
-        run: |
-          echo "## Benchmark Results: Docker vs MicroVM" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | Docker Boot | MicroVM Boot | Speedup |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------------|-------------|--------------|---------|" >> $GITHUB_STEP_SUMMARY
-
-          TOTAL_DOCKER=0
-          TOTAL_MICROVM=0
-          COUNT=0
-
-          for f in benchmark-results/*.json; do
-            if [ -f "$f" ]; then
-              ENV=$(jq -r '.env' "$f")
-              DOCKER_BOOT=$(jq -r '.docker.boot_ms' "$f")
-              MICROVM_BOOT=$(jq -r '.microvm.boot_ms' "$f")
-              SPEEDUP=$(jq -r '.speedup' "$f")
-
-              echo "| $ENV | ${DOCKER_BOOT}ms | ${MICROVM_BOOT}ms | $SPEEDUP |" >> $GITHUB_STEP_SUMMARY
-
-              if [ "$MICROVM_BOOT" != "null" ]; then
-                TOTAL_DOCKER=$((TOTAL_DOCKER + DOCKER_BOOT))
-                TOTAL_MICROVM=$((TOTAL_MICROVM + MICROVM_BOOT))
-                COUNT=$((COUNT + 1))
-              fi
-            fi
-          done
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ $COUNT -gt 0 ]; then
-            AVG_DOCKER=$((TOTAL_DOCKER / COUNT))
-            AVG_MICROVM=$((TOTAL_MICROVM / COUNT))
-            AVG_SPEEDUP=$(echo "scale=2; $AVG_DOCKER / $AVG_MICROVM" | bc)
-
-            echo "### Average Performance" >> $GITHUB_STEP_SUMMARY
-            echo "- **Average Docker boot:** ${AVG_DOCKER}ms" >> $GITHUB_STEP_SUMMARY
-            echo "- **Average MicroVM boot:** ${AVG_MICROVM}ms" >> $GITHUB_STEP_SUMMARY
-            echo "- **Average speedup:** ${AVG_SPEEDUP}x faster" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Create aggregated results JSON
+          docker build -t echo_env:latest .
+
+      - name: Convert echo_env to MicroVM
+        if: steps.kvm.outputs.available == 'true'
         run: |
-          echo '{"benchmarks": [' > benchmark-results/all.json
-          first=true
-          for f in benchmark-results/*.json; do
-            if [ -f "$f" ] && [ "$f" != "benchmark-results/all.json" ]; then
-              if [ "$first" = true ]; then
-                first=false
-              else
-                echo ',' >> benchmark-results/all.json
-              fi
-              cat "$f" >> benchmark-results/all.json
-            fi
-          done
-          echo ']}' >> benchmark-results/all.json
+          openenvvm convert ./OpenEnv/envs/echo_env -o echo_env.microvm
+          ls -la echo_env.microvm/
 
-          cat benchmark-results/all.json
+      - name: Run sandbox-bench - All providers
+        id: benchmark
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          DOCKER_IMAGE: echo_env:latest
+          MICROVM_COMMAND: "openenvvm run ./echo_env.microvm --port {port} --ip {ip}"
+        run: |
+          # Build provider list based on available credentials
+          PROVIDERS=""
 
-      - name: Upload aggregated results
+          # Always test local providers
+          PROVIDERS="--provider docker-image"
+
+          if [ "${{ steps.kvm.outputs.available }}" == "true" ]; then
+            PROVIDERS="$PROVIDERS --provider microvm"
+          fi
+
+          # Add cloud providers if keys available
+          if [ -n "$E2B_API_KEY" ]; then
+            PROVIDERS="$PROVIDERS --provider e2b"
+          fi
+
+          if [ -n "$DAYTONA_API_KEY" ]; then
+            PROVIDERS="$PROVIDERS --provider daytona"
+          fi
+
+          if [ -n "$MODAL_TOKEN_ID" ]; then
+            PROVIDERS="$PROVIDERS --provider modal"
+          fi
+
+          echo "Running: sandbox-bench run $PROVIDERS --runs 3"
+          sandbox-bench run $PROVIDERS --runs 3 --output benchmark-results.json || true
+
+          if [ -f benchmark-results.json ]; then
+            cat benchmark-results.json
+          fi
+
+      - name: Generate results summary
+        id: results
+        run: |
+          python3 << 'PYTHON'
+          import json
+          import os
+          from datetime import datetime
+
+          results_file = "benchmark-results.json"
+          if not os.path.exists(results_file):
+              print("No results file found")
+              exit(0)
+
+          with open(results_file) as f:
+              data = json.load(f)
+
+          results = data.get("results", [])
+          if not results:
+              print("No results in file")
+              exit(0)
+
+          # Generate markdown table
+          md = []
+          md.append("| Provider | Time | Tool Calls | Errors | Score | Grade |")
+          md.append("|----------|------|------------|--------|-------|-------|")
+
+          for r in sorted(results, key=lambda x: x.get("score", 0), reverse=True):
+              provider = r.get("provider", "unknown")
+              time_s = r.get("total_time_seconds", 0)
+              if time_s >= 60:
+                  time_str = f"{int(time_s // 60)}m {int(time_s % 60)}s"
+              else:
+                  time_str = f"{time_s:.1f}s"
+              calls = r.get("tool_calls", 0)
+              errors = r.get("errors", 0)
+              score = r.get("score", 0)
+              grade = r.get("grade", "?")
+
+              md.append(f"| {provider} | {time_str} | {calls} | {errors} | {score:.1f} | {grade} |")
+
+          table = "\n".join(md)
+
+          # Find docker-image and microvm results for comparison
+          docker_result = next((r for r in results if r["provider"] == "docker-image"), None)
+          microvm_result = next((r for r in results if r["provider"] == "microvm"), None)
+
+          comparison = ""
+          if docker_result and microvm_result:
+              docker_time = docker_result.get("total_time_seconds", 1)
+              microvm_time = microvm_result.get("total_time_seconds", 1)
+              if microvm_time > 0:
+                  speedup = docker_time / microvm_time
+                  comparison = f"\n**MicroVM is {speedup:.1f}x faster than Docker** ({docker_time:.1f}s vs {microvm_time:.1f}s)"
+
+          # Write outputs
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              # Use delimiter for multiline
+              f.write(f"table<<EOF\n{table}\nEOF\n")
+              f.write(f"comparison<<EOF\n{comparison}\nEOF\n")
+              f.write(f"date={datetime.now().strftime('%Y-%m-%d %H:%M UTC')}\n")
+
+          print("Generated results:")
+          print(table)
+          print(comparison)
+          PYTHON
+
+      - name: Update README with results
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          python3 << 'PYTHON'
+          import re
+          import os
+
+          table = os.environ.get("RESULTS_TABLE", "")
+          comparison = os.environ.get("RESULTS_COMPARISON", "")
+          date = os.environ.get("RESULTS_DATE", "")
+
+          if not table:
+              print("No results to update")
+              exit(0)
+
+          with open("README.md", "r") as f:
+              readme = f.read()
+
+          # Create the new benchmark section
+          new_section = f'''## Latest Benchmark Results
+
+*Last updated: {date}*
+
+{table}
+{comparison}
+
+> Benchmarks run automatically in CI using [sandbox-bench](https://github.com/zkwentz/sandbox-bench).
+> See [workflow runs](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml) for details.
+
+## Performance'''
+
+          # Replace the section between "## Latest Benchmark Results" or "## Performance Results" and "## Performance" or "## Quick Start"
+          # First, try to find existing "Latest Benchmark Results" section
+          pattern = r'## Latest Benchmark Results.*?(?=## Performance\b|## Quick Start)'
+          if re.search(pattern, readme, re.DOTALL):
+              readme = re.sub(pattern, new_section + "\n\n", readme, flags=re.DOTALL)
+          else:
+              # Try to find "Performance Results" section
+              pattern = r'## Performance Results.*?(?=## Quick Start)'
+              if re.search(pattern, readme, re.DOTALL):
+                  readme = re.sub(pattern, new_section + "\n\n## Quick Start", readme, flags=re.DOTALL)
+              else:
+                  # Insert after the first heading
+                  pattern = r'(# OpenEnvVM\n\n\[.*?\]\n\n.*?\n\n)'
+                  if re.search(pattern, readme, re.DOTALL):
+                      readme = re.sub(pattern, r'\1' + new_section + "\n\n", readme, flags=re.DOTALL)
+
+          with open("README.md", "w") as f:
+              f.write(readme)
+
+          print("README updated successfully")
+          PYTHON
+        env:
+          RESULTS_TABLE: ${{ steps.results.outputs.table }}
+          RESULTS_COMPARISON: ${{ steps.results.outputs.comparison }}
+          RESULTS_DATE: ${{ steps.results.outputs.date }}
+
+      - name: Commit and push README updates
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add README.md
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update benchmark results in README [skip ci]"
+            git push
+          fi
+
+      - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-results-all
-          path: benchmark-results/all.json
+          name: benchmark-results
+          path: benchmark-results.json
           retention-days: 90
+
+      - name: Generate GitHub Summary
+        run: |
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.results.outputs.table }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.results.outputs.comparison }}" >> $GITHUB_STEP_SUMMARY

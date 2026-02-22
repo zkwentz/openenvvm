@@ -2,40 +2,40 @@
 
 [![CI](https://github.com/zkwentz/openenvvm/actions/workflows/ci.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/ci.yml)
 [![Build OpenEnv MicroVMs](https://github.com/zkwentz/openenvvm/actions/workflows/build-envs.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/build-envs.yml)
+[![Benchmark](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml)
 
 Convert OpenEnv environments to Firecracker microVMs for ultra-fast startup and secure isolation.
 
 Written in Rust for maximum performance and reliability.
 
-## Performance Results
+## Latest Benchmark Results
 
-MicroVMs provide significant performance improvements over Docker containers:
+*Benchmarks run automatically via [sandbox-bench](https://github.com/zkwentz/sandbox-bench)*
 
-### Aggregate Performance
+| Provider | Time | Tool Calls | Errors | Score | Grade |
+|----------|------|------------|--------|-------|-------|
+| microvm | 3.2s | 6 | 0 | 98.0 | A |
+| docker-image | 8.5s | 6 | 0 | 95.0 | A |
+| e2b | 43.0s | 13 | 0 | 96.8 | A |
+| daytona | 128.0s | 19 | 1 | 94.9 | A |
+| modal | 52.0s | 15 | 0 | 94.7 | A |
+
+**MicroVM is 2.7x faster than Docker** (8.5s vs 3.2s)
+
+> See [workflow runs](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml) for latest results.
+
+## Performance
+
+### Why MicroVMs?
 
 | Metric | Docker | MicroVM | Improvement |
 |--------|--------|---------|-------------|
-| **Average Boot Time** | ~500ms | ~125ms | **4x faster** |
-| **Average Reset Time** | ~200ms | ~50ms | **4x faster** |
-| **Memory Overhead** | ~50MB | ~32MB | **36% less** |
-| **Isolation Level** | Namespace | Hardware (KVM) | **Stronger** |
+| **Boot Time** | ~500ms | ~125ms | **4x faster** |
+| **Reset Time** | ~200ms | ~50ms | **4x faster** |
+| **Memory** | ~50MB | ~32MB | **36% less** |
+| **Isolation** | Namespace | Hardware (KVM) | **Stronger** |
 
-### Per-Environment Benchmarks
-
-Benchmarks are run automatically in CI. See the [latest benchmark results](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml).
-
-| Environment | Docker Boot | MicroVM Boot | Speedup |
-|-------------|-------------|--------------|---------|
-| echo_env | ~450ms | ~120ms | **3.8x** |
-| chat_env | ~480ms | ~125ms | **3.8x** |
-| connect4_env | ~520ms | ~130ms | **4.0x** |
-| grid_world_env | ~490ms | ~125ms | **3.9x** |
-| maze_env | ~510ms | ~128ms | **4.0x** |
-| snake_env | ~505ms | ~126ms | **4.0x** |
-
-*Boot times measured from container/VM start to HTTP health check response.*
-
-### Why This Matters for RL Training
+### Impact on RL Training
 
 For reinforcement learning at scale, these improvements compound significantly:
 
