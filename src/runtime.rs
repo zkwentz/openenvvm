@@ -127,7 +127,7 @@ pub async fn start_microvm(
     update_config_tap_device(&config_path, &tap_device)?;
 
     // Start Firecracker
-    let process = Command::new("firecracker")
+    let mut process = Command::new("firecracker")
         .args([
             "--api-sock",
             socket_path.to_str().unwrap(),
@@ -139,8 +139,9 @@ pub async fn start_microvm(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    // Wait for socket
-    wait_for_socket(&socket_path, Duration::from_secs(10)).await?;
+    // Wait for socket, checking if process dies
+    let timeout_duration = Duration::from_secs(10);
+    wait_for_socket_or_crash(&socket_path, &mut process, timeout_duration).await?;
 
     // Configure and start the VM via API
     configure_vm(&socket_path).await?;
@@ -204,11 +205,36 @@ async fn run_sudo(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Wait for the Firecracker API socket to be available
-async fn wait_for_socket(socket_path: &Path, timeout_duration: Duration) -> Result<()> {
+/// Wait for the Firecracker API socket to be available, checking for crashes
+async fn wait_for_socket_or_crash(
+    socket_path: &Path,
+    process: &mut Child,
+    timeout_duration: Duration,
+) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+
     let start = std::time::Instant::now();
 
     while start.elapsed() < timeout_duration {
+        // Check if Firecracker crashed
+        if let Ok(Some(status)) = process.try_wait() {
+            let stderr = if let Some(ref mut stderr) = process.stderr {
+                let mut buf = String::new();
+                let _ = stderr.read_to_string(&mut buf).await;
+                buf
+            } else {
+                String::new()
+            };
+            return Err(MicroVMError::CommandFailed {
+                command: "firecracker".to_string(),
+                message: format!(
+                    "Firecracker exited with status {}. stderr: {}",
+                    status, stderr
+                ),
+            });
+        }
+
+        // Check if socket exists
         if socket_path.exists() {
             return Ok(());
         }
