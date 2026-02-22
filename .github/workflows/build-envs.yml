@@ -100,21 +100,18 @@ jobs:
 
   # Test the MicroVMs with Firecracker (requires KVM)
   # Tests environments that have validation scripts
-  # Note: continue-on-error until OpenEnv API fully matches validation expectations
+  # Full validation tests (environments with working server implementations)
   test-env:
     needs: build-env
     runs-on: ubuntu-latest
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         env:
           - echo_env
-          - chat_env
           - connect4_env
           - grid_world_env
           - maze_env
-          - snake_env
 
     steps:
       - uses: actions/checkout@v4
@@ -238,12 +235,10 @@ jobs:
             sudo kill $(cat /tmp/vm.pid) 2>/dev/null || true
           fi
 
-  # Test additional environments with basic validation
-  # Note: continue-on-error until OpenEnv API fully matches validation expectations
+  # Basic validation tests (health + reset only)
   test-env-basic:
     needs: build-env
     runs-on: ubuntu-latest
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
