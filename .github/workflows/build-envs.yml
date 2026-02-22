@@ -206,6 +206,14 @@ jobs:
           ip route || true
 
           echo ""
+          echo "=== Check Firecracker process ==="
+          ps aux | grep firecracker || true
+
+          echo ""
+          echo "=== Kernel messages (network) ==="
+          sudo dmesg | tail -50 | grep -iE "(tap|kvm|net|eth)" || true
+
+          echo ""
           echo "=== Ping test ==="
           ping -c 3 172.16.0.2 || true
 
