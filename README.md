@@ -10,19 +10,19 @@ Written in Rust for maximum performance and reliability.
 
 ## Latest Benchmark Results
 
-*Benchmarks run automatically via [sandbox-bench](https://github.com/zkwentz/sandbox-bench)*
+*Last updated: 2026-02-22 02:41 UTC*
 
 | Provider | Time | Tool Calls | Errors | Score | Grade |
 |----------|------|------------|--------|-------|-------|
-| microvm | 3.2s | 6 | 0 | 98.0 | A |
-| docker-image | 8.5s | 6 | 0 | 95.0 | A |
-| e2b | 43.0s | 13 | 0 | 96.8 | A |
-| daytona | 128.0s | 19 | 1 | 94.9 | A |
-| modal | 52.0s | 15 | 0 | 94.7 | A |
+| docker-image | 1m 0s | 1 | 1 | 0.0 | F |
+| microvm | 0.0s | 1 | 1 | 0.0 | F |
 
-**MicroVM is 2.7x faster than Docker** (8.5s vs 3.2s)
+**MicroVM is 2930.9x faster than Docker** (60.5s vs 0.0s)
 
-> See [workflow runs](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml) for latest results.
+> Benchmarks run automatically in CI using [sandbox-bench](https://github.com/zkwentz/sandbox-bench).
+> See [workflow runs](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml) for details.
+
+## Performance
 
 ## Performance
 
