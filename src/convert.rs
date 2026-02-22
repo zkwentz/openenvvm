@@ -73,6 +73,13 @@ pub struct Metadata {
 ///
 /// # Returns
 /// Path to the created .microvm package
+///
+/// # Platform Requirements
+/// This function requires Linux with:
+/// - `dd`, `mkfs.ext4` for creating filesystem images
+/// - `mount -o loop` for mounting images
+/// - `docker` for extracting Alpine base
+/// - `chroot` for installing packages
 pub fn convert_env_to_microvm(
     env_path: &str,
     output_path: &Path,
@@ -80,6 +87,23 @@ pub fn convert_env_to_microvm(
     memory_mb: u32,
     vcpu_count: u32,
 ) -> Result<PathBuf> {
+    // Check platform
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Err(MicroVMError::CommandFailed {
+            command: "convert".to_string(),
+            message: "The convert command requires Linux. It uses Linux-specific tools:\n  \
+                      - dd, mkfs.ext4 for creating filesystem images\n  \
+                      - mount -o loop for mounting images\n  \
+                      - docker for extracting Alpine base\n  \
+                      - chroot for installing packages\n\n\
+                      Please run this on a Linux machine or in a Linux VM/container."
+                .to_string(),
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    {
     let output = output_path.to_path_buf();
     fs::create_dir_all(&output)?;
 
@@ -126,6 +150,7 @@ pub fn convert_env_to_microvm(
     fs::write(output.join("metadata.json"), metadata_json)?;
 
     Ok(output)
+    }
 }
 
 /// Resolve environment source (local path or HuggingFace)
