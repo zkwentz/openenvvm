@@ -217,7 +217,15 @@ COPY {env_name} /app/env
 RUN if [ -f /app/env/server/requirements.txt ]; then \
         pip3 install --break-system-packages -r /app/env/server/requirements.txt || true; \
     fi
-RUN printf '#!/bin/sh\ncd /app/env\nexec uvicorn server.app:app --host 0.0.0.0 --port 8000\n' > /init.sh && chmod 755 /init.sh
+RUN printf '#!/bin/sh\n\
+# Configure network\n\
+ip addr add 172.16.0.2/24 dev eth0\n\
+ip link set eth0 up\n\
+ip route add default via 172.16.0.1 dev eth0\n\
+\n\
+# Start the application\n\
+cd /app/env\n\
+exec uvicorn server.app:app --host 0.0.0.0 --port 8000\n' > /init.sh && chmod 755 /init.sh
 "#,
         env_name = env_name
     );
