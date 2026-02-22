@@ -29,20 +29,23 @@ cargo install openenv-microvm
 ### From source
 
 ```bash
-git clone https://github.com/your-org/openenv-microvm
+git clone https://github.com/zkwentz/openenv-microvm
 cd openenv-microvm
 cargo build --release
 ```
 
 ### Prerequisites
 
+**For building microVM packages (`convert` command) - works on macOS, Linux, Windows:**
+- [Docker Desktop](https://docker.com/products/docker-desktop) or Docker Engine
+
+**For running microVMs (`run`/`pool` commands) - Linux only:**
 - Linux with KVM support (`/dev/kvm`)
 - Firecracker v1.6+
-- Docker (for building rootfs)
 - Root or `kvm` group membership
 
 ```bash
-# Install Firecracker
+# Install Firecracker (Linux only)
 curl -L https://github.com/firecracker-microvm/firecracker/releases/download/v1.6.0/firecracker-v1.6.0-x86_64.tgz | tar xz
 sudo mv firecracker-v1.6.0-x86_64 /usr/local/bin/firecracker
 ```
@@ -170,8 +173,9 @@ OPTIONS:
 ## Components
 
 ### Converter (`src/convert.rs`)
+- Works on macOS, Linux, and Windows (uses Docker for cross-platform support)
 - Resolves environment sources (local paths or HuggingFace)
-- Builds minimal Alpine rootfs with Python
+- Builds minimal Alpine rootfs with Python inside Docker
 - Installs environment dependencies
 - Creates ext4 filesystem image
 - Generates Firecracker configuration
