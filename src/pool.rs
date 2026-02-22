@@ -112,9 +112,7 @@ impl MicroVMPool {
 
         for _ in 0..self.size {
             let pool = self.clone();
-            let handle = tokio::spawn(async move {
-                pool.create_vm().await
-            });
+            let handle = tokio::spawn(async move { pool.create_vm().await });
             handles.push(handle);
         }
 
@@ -146,8 +144,14 @@ impl MicroVMPool {
             (vm_id, ip_address, gateway)
         };
 
-        match start_microvm(&self.package_path, Some(&vm_id), self.port, &ip_address, &gateway)
-            .await
+        match start_microvm(
+            &self.package_path,
+            Some(&vm_id),
+            self.port,
+            &ip_address,
+            &gateway,
+        )
+        .await
         {
             Ok(vm) => {
                 let mut state = self.state.lock().await;
@@ -260,7 +264,12 @@ impl MicroVMPool {
             .map_err(|e| MicroVMError::Http(e))?;
 
         let reset_url = format!("{}/reset", vm.url());
-        match client.post(&reset_url).json(&serde_json::json!({})).send().await {
+        match client
+            .post(&reset_url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+        {
             Ok(_) => {
                 // Return to available pool
                 let mut state = self.state.lock().await;

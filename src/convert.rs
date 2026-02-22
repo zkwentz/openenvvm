@@ -153,7 +153,9 @@ fn check_docker() -> Result<()> {
         }),
         Err(_) => Err(MicroVMError::CommandFailed {
             command: "docker".to_string(),
-            message: "Docker is not installed. Please install Docker Desktop from https://docker.com".to_string(),
+            message:
+                "Docker is not installed. Please install Docker Desktop from https://docker.com"
+                    .to_string(),
         }),
     }
 }
@@ -249,11 +251,18 @@ RUN printf '#!/bin/sh\ncd /app/env\nexec uvicorn server.app:app --host 0.0.0.0 -
 
     // Create a container (don't run it)
     let output = Command::new("docker")
-        .args(["create", "--name", &format!("{}-export", container_name), &container_name])
+        .args([
+            "create",
+            "--name",
+            &format!("{}-export", container_name),
+            &container_name,
+        ])
         .output()?;
 
     if !output.status.success() {
-        let _ = Command::new("docker").args(["rmi", "-f", &container_name]).output();
+        let _ = Command::new("docker")
+            .args(["rmi", "-f", &container_name])
+            .output();
         return Err(MicroVMError::CommandFailed {
             command: "docker create".to_string(),
             message: String::from_utf8_lossy(&output.stderr).to_string(),
@@ -272,8 +281,12 @@ RUN printf '#!/bin/sh\ncd /app/env\nexec uvicorn server.app:app --host 0.0.0.0 -
         .output()?;
 
     // Cleanup container
-    let _ = Command::new("docker").args(["rm", "-f", &format!("{}-export", container_name)]).output();
-    let _ = Command::new("docker").args(["rmi", "-f", &container_name]).output();
+    let _ = Command::new("docker")
+        .args(["rm", "-f", &format!("{}-export", container_name)])
+        .output();
+    let _ = Command::new("docker")
+        .args(["rmi", "-f", &container_name])
+        .output();
 
     if !output.status.success() {
         return Err(MicroVMError::CommandFailed {

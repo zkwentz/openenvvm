@@ -220,9 +220,14 @@ async fn wait_for_socket(socket_path: &Path, timeout_duration: Duration) -> Resu
 /// Configure the VM via Firecracker API
 async fn configure_vm(socket_path: &Path) -> Result<()> {
     // Start the VM instance
-    api_request(socket_path, "PUT", "/actions", &ActionRequest {
-        action_type: "InstanceStart".to_string(),
-    })
+    api_request(
+        socket_path,
+        "PUT",
+        "/actions",
+        &ActionRequest {
+            action_type: "InstanceStart".to_string(),
+        },
+    )
     .await?;
 
     Ok(())
@@ -235,8 +240,8 @@ async fn api_request<T: Serialize>(
     path: &str,
     body: &T,
 ) -> Result<()> {
-    use std::os::unix::net::UnixStream;
     use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
 
     let body_json = serde_json::to_string(body)?;
 
