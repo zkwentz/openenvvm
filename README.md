@@ -1,6 +1,5 @@
 # OpenEnv MicroVM
 
-[![CI](https://github.com/zkwentz/openenvvm/actions/workflows/ci.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/ci.yml)
 [![Build MicroVMs](https://github.com/zkwentz/openenvvm/actions/workflows/build-envs.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/build-envs.yml)
 [![Benchmark](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml)
 
