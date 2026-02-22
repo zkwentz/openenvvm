@@ -223,6 +223,7 @@ echo "MicroVM init starting..."\n\
 # Set up environment\n\
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\
 export HOME=/root\n\
+export PYTHONPATH=/app\n\
 \n\
 # Configure network\n\
 echo "Configuring network..."\n\
@@ -234,8 +235,8 @@ ip addr show eth0\n\
 \n\
 # Start the application\n\
 echo "Starting uvicorn server..."\n\
-cd /app/env\n\
-exec uvicorn server.app:app --host 0.0.0.0 --port 8000 2>&1\n' > /init.sh && chmod 755 /init.sh
+cd /app\n\
+exec uvicorn env.server.app:app --host 0.0.0.0 --port 8000 2>&1\n' > /init.sh && chmod 755 /init.sh
 "#,
         env_name = env_name
     );
