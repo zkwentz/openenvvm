@@ -82,7 +82,7 @@ jobs:
       - name: Checkout OpenEnv
         uses: actions/checkout@v4
         with:
-          repository: openenv/OpenEnv
+          repository: meta-pytorch/OpenEnv
           path: OpenEnv
 
       - name: Convert ${{ matrix.env }} to MicroVM
