@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum MicroVMError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

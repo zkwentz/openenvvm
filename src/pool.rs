@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, Notify};
 
 /// Statistics for a MicroVM pool
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct PoolStats {
     pub total_vms: usize,
     pub available_vms: usize,
@@ -20,6 +21,7 @@ pub struct PoolStats {
 }
 
 /// Internal pool state
+#[allow(dead_code)]
 struct PoolState {
     available: VecDeque<MicroVM>,
     in_use: Vec<String>, // VM IDs that are in use
@@ -197,6 +199,7 @@ impl MicroVMPool {
     ///
     /// # Returns
     /// An available MicroVM instance
+    #[allow(dead_code)]
     pub async fn acquire(&self, timeout: Option<Duration>) -> Result<MicroVM> {
         let start = Instant::now();
 
@@ -247,6 +250,7 @@ impl MicroVMPool {
     /// Release a VM back to the pool
     ///
     /// The VM will be reset before being made available again.
+    #[allow(dead_code)]
     pub async fn release(&self, vm: MicroVM) -> Result<()> {
         {
             let mut state = self.state.lock().await;
@@ -261,7 +265,7 @@ impl MicroVMPool {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .map_err(|e| MicroVMError::Http(e))?;
+            .map_err(MicroVMError::Http)?;
 
         let reset_url = format!("{}/reset", vm.url());
         match client

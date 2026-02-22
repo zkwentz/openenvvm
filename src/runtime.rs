@@ -1,7 +1,7 @@
 //! MicroVM runtime management
 
 use crate::error::{MicroVMError, Result};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use tokio::time::{sleep, timeout};
 
 /// Represents a running MicroVM instance
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct MicroVM {
     pub vm_id: String,
     process: Arc<Mutex<Child>>,
