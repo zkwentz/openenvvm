@@ -207,7 +207,7 @@ fn build_rootfs_docker(env_dir: &Path, output_path: &Path, size_mb: u32) -> Resu
     // Install openenv_core which is required by most OpenEnv environments
     let dockerfile = format!(
         r#"FROM alpine:3.19
-RUN apk add --no-cache python3 py3-pip git
+RUN apk add --no-cache python3 py3-pip git iproute2
 RUN pip3 install --break-system-packages uvicorn fastapi
 
 # Install openenv_core from the OpenEnv repository
