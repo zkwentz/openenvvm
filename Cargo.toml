@@ -1,17 +1,17 @@
 [package]
-name = "openenv-microvm"
+name = "openenvvm"
 version = "0.1.0"
 edition = "2021"
 authors = ["OpenEnv Contributors"]
 description = "Convert OpenEnv environments to Firecracker microVMs for ultra-fast startup and secure isolation"
 license = "MIT"
-repository = "https://github.com/zwentz-macmini/openenv-microvm"
+repository = "https://github.com/zkwentz/openenvvm"
 keywords = ["microvm", "firecracker", "openenv", "virtualization", "rl"]
 categories = ["command-line-utilities", "virtualization"]
 readme = "README.md"
 
 [[bin]]
-name = "openenv-microvm"
+name = "openenvvm"
 path = "src/main.rs"
 
 [dependencies]

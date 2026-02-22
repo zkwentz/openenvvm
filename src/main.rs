@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "openenv-microvm")]
+#[command(name = "openenvvm")]
 #[command(about = "Convert OpenEnv environments to Firecracker microVMs")]
 #[command(version)]
 struct Cli {

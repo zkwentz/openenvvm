@@ -1,4 +1,4 @@
-//! Integration tests for openenv-microvm
+//! Integration tests for openenvvm
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -7,7 +7,7 @@ use tempfile::TempDir;
 
 #[test]
 fn test_cli_help() {
-    let mut cmd = Command::cargo_bin("openenv-microvm").unwrap();
+    let mut cmd = Command::cargo_bin("openenvvm").unwrap();
     cmd.arg("--help")
         .assert()
         .success()
@@ -16,16 +16,16 @@ fn test_cli_help() {
 
 #[test]
 fn test_cli_version() {
-    let mut cmd = Command::cargo_bin("openenv-microvm").unwrap();
+    let mut cmd = Command::cargo_bin("openenvvm").unwrap();
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("openenv-microvm"));
+        .stdout(predicate::str::contains("openenvvm"));
 }
 
 #[test]
 fn test_convert_help() {
-    let mut cmd = Command::cargo_bin("openenv-microvm").unwrap();
+    let mut cmd = Command::cargo_bin("openenvvm").unwrap();
     cmd.args(["convert", "--help"])
         .assert()
         .success()
@@ -34,7 +34,7 @@ fn test_convert_help() {
 
 #[test]
 fn test_run_help() {
-    let mut cmd = Command::cargo_bin("openenv-microvm").unwrap();
+    let mut cmd = Command::cargo_bin("openenvvm").unwrap();
     cmd.args(["run", "--help"])
         .assert()
         .success()
@@ -43,7 +43,7 @@ fn test_run_help() {
 
 #[test]
 fn test_pool_help() {
-    let mut cmd = Command::cargo_bin("openenv-microvm").unwrap();
+    let mut cmd = Command::cargo_bin("openenvvm").unwrap();
     cmd.args(["pool", "--help"])
         .assert()
         .success()
@@ -52,7 +52,7 @@ fn test_pool_help() {
 
 #[test]
 fn test_convert_missing_output() {
-    let mut cmd = Command::cargo_bin("openenv-microvm").unwrap();
+    let mut cmd = Command::cargo_bin("openenvvm").unwrap();
     cmd.args(["convert", "some/path"])
         .assert()
         .failure()
@@ -64,7 +64,7 @@ fn test_convert_invalid_path() {
     let tmp = TempDir::new().unwrap();
     let output = tmp.path().join("output.microvm");
 
-    let mut cmd = Command::cargo_bin("openenv-microvm").unwrap();
+    let mut cmd = Command::cargo_bin("openenvvm").unwrap();
     cmd.args([
         "convert",
         "/nonexistent/path/to/env",
@@ -77,7 +77,7 @@ fn test_convert_invalid_path() {
 
 #[test]
 fn test_run_missing_package() {
-    let mut cmd = Command::cargo_bin("openenv-microvm").unwrap();
+    let mut cmd = Command::cargo_bin("openenvvm").unwrap();
     cmd.args(["run", "/nonexistent/package.microvm"])
         .assert()
         .failure();

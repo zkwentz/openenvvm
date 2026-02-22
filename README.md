@@ -1,4 +1,4 @@
-# OpenEnv → MicroVM Converter
+# OpenEnvVM
 
 Convert OpenEnv environments to Firecracker microVMs for ultra-fast startup and secure isolation.
 
@@ -22,13 +22,13 @@ For RL training at scale, microVMs provide:
 
 ```bash
 # Install (requires Rust)
-cargo install openenv-microvm
+cargo install openenvvm
 
 # Convert an environment (requires Docker)
-openenv-microvm convert ./my-env -o my-env.microvm
+openenvvm convert ./my-env -o my-env.microvm
 
 # Run the microVM (requires Linux + KVM + Firecracker)
-openenv-microvm run my-env.microvm --port 8000
+openenvvm run my-env.microvm --port 8000
 ```
 
 ## Installation
@@ -36,11 +36,11 @@ openenv-microvm run my-env.microvm --port 8000
 ### From source
 
 ```bash
-git clone https://github.com/zkwentz/openenv-microvm
-cd openenv-microvm
+git clone https://github.com/zkwentz/openenvvm
+cd openenvvm
 cargo build --release
 
-# Binary will be at ./target/release/openenv-microvm
+# Binary will be at ./target/release/openenvvm
 ```
 
 ### Prerequisites
@@ -69,13 +69,13 @@ sudo mv release-v1.6.0-${ARCH}/firecracker-v1.6.0-${ARCH} /usr/local/bin/firecra
 
 ```bash
 # From local directory
-openenv-microvm convert ./envs/echo_env -o echo-env.microvm
+openenvvm convert ./envs/echo_env -o echo-env.microvm
 
 # From HuggingFace Space
-openenv-microvm convert hf:openenv/echo-env -o echo-env.microvm
+openenvvm convert hf:openenv/echo-env -o echo-env.microvm
 
 # With custom resources
-openenv-microvm convert ./envs/echo_env -o echo-env.microvm --memory 512 --vcpus 2
+openenvvm convert ./envs/echo_env -o echo-env.microvm --memory 512 --vcpus 2
 ```
 
 The convert command:
@@ -89,23 +89,23 @@ The convert command:
 
 ```bash
 # Start the microVM (boots in ~125ms)
-openenv-microvm run echo-env.microvm --port 8000
+openenvvm run echo-env.microvm --port 8000
 
 # With custom IP
-openenv-microvm run echo-env.microvm --port 8000 --ip 172.16.0.10
+openenvvm run echo-env.microvm --port 8000 --ip 172.16.0.10
 ```
 
 ### Pool management for RL training (Linux only)
 
 ```bash
 # Start a pool of 32 pre-warmed microVMs
-openenv-microvm pool echo-env.microvm --size 32 --port 8000
+openenvvm pool echo-env.microvm --size 32 --port 8000
 ```
 
 The pool keeps VMs pre-booted for instant acquisition:
 
 ```python
-from openenv_microvm import MicroVMPool
+from openenvvm import MicroVMPool
 
 pool = MicroVMPool("echo-env.microvm", size=32)
 
@@ -183,7 +183,7 @@ my-env.microvm/
 │                                    └─────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              ▼  openenv-microvm convert
+                              ▼  openenvvm convert
 ┌─────────────────────────────────────────────────────────────┐
 │                     MicroVM Package                          │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
@@ -192,7 +192,7 @@ my-env.microvm/
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              ▼  openenv-microvm run
+                              ▼  openenvvm run
 ┌─────────────────────────────────────────────────────────────┐
 │                    Firecracker MicroVM                       │
 │  ┌─────────────────────────────────────────────────────────┐│
@@ -211,13 +211,13 @@ my-env.microvm/
 
 ## CLI Reference
 
-### `openenv-microvm convert`
+### `openenvvm convert`
 
 Convert an OpenEnv environment to a microVM package.
 
 ```
 USAGE:
-    openenv-microvm convert <ENV_PATH> -o <OUTPUT> [OPTIONS]
+    openenvvm convert <ENV_PATH> -o <OUTPUT> [OPTIONS]
 
 ARGS:
     <ENV_PATH>    Path to OpenEnv environment directory, or hf:org/repo for HuggingFace
@@ -230,13 +230,13 @@ OPTIONS:
     -h, --help               Print help
 ```
 
-### `openenv-microvm run`
+### `openenvvm run`
 
 Run a single microVM package. **Requires Linux with KVM.**
 
 ```
 USAGE:
-    openenv-microvm run <PACKAGE_PATH> [OPTIONS]
+    openenvvm run <PACKAGE_PATH> [OPTIONS]
 
 ARGS:
     <PACKAGE_PATH>    Path to the .microvm package directory
@@ -247,13 +247,13 @@ OPTIONS:
     -h, --help           Print help
 ```
 
-### `openenv-microvm pool`
+### `openenvvm pool`
 
 Run a pool of pre-warmed microVMs. **Requires Linux with KVM.**
 
 ```
 USAGE:
-    openenv-microvm pool <PACKAGE_PATH> [OPTIONS]
+    openenvvm pool <PACKAGE_PATH> [OPTIONS]
 
 ARGS:
     <PACKAGE_PATH>    Path to the .microvm package directory

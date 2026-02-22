@@ -68,7 +68,7 @@ jobs:
 
       - name: Test convert command
         run: |
-          ./target/release/openenv-microvm convert ./test-env -o test.microvm
+          ./target/release/openenvvm convert ./test-env -o test.microvm
           ls -la test.microvm/
           cat test.microvm/metadata.json
           cat test.microvm/config.json
@@ -136,12 +136,12 @@ jobs:
           EOF
 
       - name: Convert environment
-        run: ./target/release/openenv-microvm convert ./test-env -o test.microvm
+        run: ./target/release/openenvvm convert ./test-env -o test.microvm
 
       - name: Test run command
         run: |
           # Start the VM in background
-          timeout 60 ./target/release/openenv-microvm run test.microvm --port 8000 &
+          timeout 60 ./target/release/openenvvm run test.microvm --port 8000 &
           VM_PID=$!
 
           # Wait for VM to be ready
