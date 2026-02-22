@@ -170,11 +170,24 @@ jobs:
           name: microvm-${{ matrix.env }}
           path: ./${{ matrix.env }}.microvm
 
+      - name: Verify MicroVM package contents
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          echo "=== Package contents ==="
+          ls -la ${{ matrix.env }}.microvm/
+          echo ""
+          echo "=== Config.json ==="
+          cat ${{ matrix.env }}.microvm/config.json
+          echo ""
+          echo "=== Checking files ==="
+          file ${{ matrix.env }}.microvm/vmlinux || echo "vmlinux file check failed"
+          file ${{ matrix.env }}.microvm/rootfs.ext4 || echo "rootfs file check failed"
+
       - name: Start ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
         run: |
-          # Start the VM in background
-          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 &
+          # Start the VM in background with verbose output
+          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 2>&1 &
           echo $! > /tmp/vm.pid
 
           # Wait for VM to be ready
@@ -264,11 +277,20 @@ jobs:
           name: microvm-${{ matrix.env }}
           path: ./${{ matrix.env }}.microvm
 
+      - name: Verify MicroVM package contents
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          echo "=== Package contents ==="
+          ls -la ${{ matrix.env }}.microvm/
+          echo ""
+          echo "=== Config.json ==="
+          cat ${{ matrix.env }}.microvm/config.json
+
       - name: Test ${{ matrix.env }} MicroVM (basic)
         if: steps.kvm.outputs.available == 'true'
         run: |
-          # Start the VM in background
-          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 &
+          # Start the VM in background with verbose output
+          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 2>&1 &
           VM_PID=$!
 
           # Wait for VM to boot
