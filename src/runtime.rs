@@ -174,8 +174,8 @@ pub async fn start_microvm(
     let timeout_duration = Duration::from_secs(10);
     wait_for_socket_or_crash(&socket_path, &mut process, timeout_duration).await?;
 
-    // Configure and start the VM via API
-    configure_vm(&socket_path).await?;
+    // Note: When using --config-file mode, Firecracker automatically boots the VM.
+    // We don't need to call InstanceStart via the API - the VM is already running.
 
     let vm = MicroVM {
         vm_id,
