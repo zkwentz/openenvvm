@@ -210,8 +210,8 @@ fn build_rootfs_docker(env_dir: &Path, output_path: &Path, size_mb: u32) -> Resu
 RUN apk add --no-cache python3 py3-pip git iproute2
 RUN pip3 install --break-system-packages uvicorn fastapi
 
-# Install openenv_core from the OpenEnv repository
-RUN pip3 install --break-system-packages git+https://github.com/meta-pytorch/OpenEnv.git#subdirectory=openenv_core || true
+# Install openenv from the OpenEnv repository (provides openenv.core module)
+RUN pip3 install --break-system-packages git+https://github.com/meta-pytorch/OpenEnv.git || true
 
 COPY {env_name} /app/env
 RUN if [ -f /app/env/server/requirements.txt ]; then \
