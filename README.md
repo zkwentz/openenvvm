@@ -1,6 +1,8 @@
 # OpenEnv MicroVM
 
-[![Build](https://github.com/zkwentz/openenvvm/actions/workflows/build-envs.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/build-envs.yml)
+[![CI](https://github.com/zkwentz/openenvvm/actions/workflows/ci.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/ci.yml)
+[![Build MicroVMs](https://github.com/zkwentz/openenvvm/actions/workflows/build-envs.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/build-envs.yml)
+[![Benchmark](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml/badge.svg)](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml)
 
 Run OpenEnv environments as Firecracker MicroVMs instead of Docker containers. Get 4x faster boot times with hardware-level isolation.
 
