@@ -163,12 +163,14 @@ pub async fn start_microvm(
 
 /// Setup TAP device and networking for the VM
 async fn setup_networking(tap_device: &str, gateway: &str) -> Result<()> {
-    // Create TAP device
-    run_sudo(&["ip", "tuntap", "add", "dev", tap_device, "mode", "tap"]).await?;
+    // Create TAP device (ignore error if it already exists)
+    let _ = run_sudo(&["ip", "tuntap", "add", "dev", tap_device, "mode", "tap"]).await;
 
-    // Configure TAP device
+    // Configure TAP device (ignore error if IP already assigned)
     let gateway_cidr = format!("{}/24", gateway);
-    run_sudo(&["ip", "addr", "add", &gateway_cidr, "dev", tap_device]).await?;
+    let _ = run_sudo(&["ip", "addr", "add", &gateway_cidr, "dev", tap_device]).await;
+
+    // Bring up the device
     run_sudo(&["ip", "link", "set", tap_device, "up"]).await?;
 
     // Enable IP forwarding

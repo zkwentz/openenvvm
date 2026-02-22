@@ -183,16 +183,6 @@ jobs:
           file ${{ matrix.env }}.microvm/vmlinux || echo "vmlinux file check failed"
           file ${{ matrix.env }}.microvm/rootfs.ext4 || echo "rootfs file check failed"
 
-      - name: Setup TAP device manually
-        if: steps.kvm.outputs.available == 'true'
-        run: |
-          echo "=== Setting up TAP device ==="
-          sudo ip tuntap add dev tap0 mode tap || echo "TAP device might already exist"
-          sudo ip addr add 172.16.0.1/24 dev tap0 || echo "IP might already be assigned"
-          sudo ip link set tap0 up
-          ip addr show tap0
-          echo "=== TAP device setup complete ==="
-
       - name: Start ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
         run: |
