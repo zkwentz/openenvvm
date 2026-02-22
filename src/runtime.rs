@@ -106,7 +106,8 @@ pub async fn start_microvm(
     ip_address: &str,
     gateway: &str,
 ) -> Result<MicroVM> {
-    let package = package_path.to_path_buf();
+    // Canonicalize the package path to get absolute paths
+    let package = std::fs::canonicalize(package_path)?;
 
     let vm_id = vm_id
         .map(|s| s.to_string())
