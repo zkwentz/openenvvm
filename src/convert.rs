@@ -102,7 +102,7 @@ pub fn convert_env_to_microvm(
     // Step 2: Build rootfs using Docker
     println!("  Building rootfs (this may take a moment)...");
     let rootfs_path = output.join("rootfs.ext4");
-    build_rootfs_docker(&env_dir, &rootfs_path, 512)?;
+    build_rootfs_docker(&env_dir, &rootfs_path, 2048)?;
 
     // Step 3: Handle kernel
     println!("  Downloading kernel...");
