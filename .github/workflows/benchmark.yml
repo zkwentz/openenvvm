@@ -129,128 +129,10 @@ jobs:
             cat benchmark-results.json
           fi
 
-      - name: Generate results summary
-        id: results
-        run: |
-          python3 << 'PYTHON'
-          import json
-          import os
-          from datetime import datetime
-
-          results_file = "benchmark-results.json"
-          if not os.path.exists(results_file):
-              print("No results file found")
-              exit(0)
-
-          with open(results_file) as f:
-              data = json.load(f)
-
-          results = data.get("results", [])
-          if not results:
-              print("No results in file")
-              exit(0)
-
-          # Generate markdown table
-          md = []
-          md.append("| Provider | Time | Tool Calls | Errors | Score | Grade |")
-          md.append("|----------|------|------------|--------|-------|-------|")
-
-          for r in sorted(results, key=lambda x: x.get("score", 0), reverse=True):
-              provider = r.get("provider", "unknown")
-              time_s = r.get("total_time_seconds", 0)
-              if time_s >= 60:
-                  time_str = f"{int(time_s // 60)}m {int(time_s % 60)}s"
-              else:
-                  time_str = f"{time_s:.1f}s"
-              calls = r.get("tool_calls", 0)
-              errors = r.get("errors", 0)
-              score = r.get("score", 0)
-              grade = r.get("grade", "?")
-
-              md.append(f"| {provider} | {time_str} | {calls} | {errors} | {score:.1f} | {grade} |")
-
-          table = "\n".join(md)
-
-          # Find docker-image and microvm results for comparison
-          docker_result = next((r for r in results if r["provider"] == "docker-image"), None)
-          microvm_result = next((r for r in results if r["provider"] == "microvm"), None)
-
-          comparison = ""
-          if docker_result and microvm_result:
-              docker_time = docker_result.get("total_time_seconds", 1)
-              microvm_time = microvm_result.get("total_time_seconds", 1)
-              if microvm_time > 0:
-                  speedup = docker_time / microvm_time
-                  comparison = f"\n**MicroVM is {speedup:.1f}x faster than Docker** ({docker_time:.1f}s vs {microvm_time:.1f}s)"
-
-          # Write outputs
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              # Use delimiter for multiline
-              f.write(f"table<<EOF\n{table}\nEOF\n")
-              f.write(f"comparison<<EOF\n{comparison}\nEOF\n")
-              f.write(f"date={datetime.now().strftime('%Y-%m-%d %H:%M UTC')}\n")
-
-          print("Generated results:")
-          print(table)
-          print(comparison)
-          PYTHON
-
       - name: Update README with results
+        id: results
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: |
-          python3 << 'PYTHON'
-          import re
-          import os
-
-          table = os.environ.get("RESULTS_TABLE", "")
-          comparison = os.environ.get("RESULTS_COMPARISON", "")
-          date = os.environ.get("RESULTS_DATE", "")
-
-          if not table:
-              print("No results to update")
-              exit(0)
-
-          with open("README.md", "r") as f:
-              readme = f.read()
-
-          # Create the new benchmark section
-          new_section = f'''## Latest Benchmark Results
-
-*Last updated: {date}*
-
-{table}
-{comparison}
-
-> Benchmarks run automatically in CI using [sandbox-bench](https://github.com/zkwentz/sandbox-bench).
-> See [workflow runs](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml) for details.
-
-## Performance'''
-
-          # Replace the section between "## Latest Benchmark Results" or "## Performance Results" and "## Performance" or "## Quick Start"
-          # First, try to find existing "Latest Benchmark Results" section
-          pattern = r'## Latest Benchmark Results.*?(?=## Performance\b|## Quick Start)'
-          if re.search(pattern, readme, re.DOTALL):
-              readme = re.sub(pattern, new_section + "\n\n", readme, flags=re.DOTALL)
-          else:
-              # Try to find "Performance Results" section
-              pattern = r'## Performance Results.*?(?=## Quick Start)'
-              if re.search(pattern, readme, re.DOTALL):
-                  readme = re.sub(pattern, new_section + "\n\n## Quick Start", readme, flags=re.DOTALL)
-              else:
-                  # Insert after the first heading
-                  pattern = r'(# OpenEnvVM\n\n\[.*?\]\n\n.*?\n\n)'
-                  if re.search(pattern, readme, re.DOTALL):
-                      readme = re.sub(pattern, r'\1' + new_section + "\n\n", readme, flags=re.DOTALL)
-
-          with open("README.md", "w") as f:
-              f.write(readme)
-
-          print("README updated successfully")
-          PYTHON
-        env:
-          RESULTS_TABLE: ${{ steps.results.outputs.table }}
-          RESULTS_COMPARISON: ${{ steps.results.outputs.comparison }}
-          RESULTS_DATE: ${{ steps.results.outputs.date }}
+        run: python3 scripts/update_readme.py benchmark-results.json
 
       - name: Commit and push README updates
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -275,9 +157,14 @@ jobs:
           retention-days: 90
 
       - name: Generate GitHub Summary
+        if: always()
         run: |
           echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.results.outputs.table }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.results.outputs.comparison }}" >> $GITHUB_STEP_SUMMARY
+          if [ -f benchmark-results.json ]; then
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat benchmark-results.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No benchmark results generated" >> $GITHUB_STEP_SUMMARY
+          fi
