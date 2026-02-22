@@ -193,32 +193,16 @@ jobs:
           ip addr show tap0
           echo "=== TAP device setup complete ==="
 
-      - name: Test Firecracker directly
-        if: steps.kvm.outputs.available == 'true'
-        run: |
-          echo "=== Testing Firecracker directly ==="
-          cd ${{ matrix.env }}.microvm
-
-          # Try running Firecracker directly to see error
-          timeout 5 sudo firecracker \
-            --api-sock /tmp/test-fc.socket \
-            --config-file config.json 2>&1 || true
-
-          echo "=== Firecracker test complete ==="
-
       - name: Start ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
         run: |
-          # Clean up any previous socket
-          sudo rm -f /tmp/test-fc.socket
-
           # Start the VM in background with verbose output
           sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 2>&1 &
           echo $! > /tmp/vm.pid
 
           # Wait for VM to be ready
           echo "Waiting for VM to boot..."
-          sleep 20
+          sleep 30
 
       - name: Validate ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
