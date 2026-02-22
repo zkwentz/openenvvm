@@ -223,7 +223,7 @@ echo "MicroVM init starting..."\n\
 # Set up environment\n\
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\
 export HOME=/root\n\
-export PYTHONPATH=/app\n\
+export PYTHONPATH=/app:/app/env\n\
 \n\
 # Configure network\n\
 echo "Configuring network..."\n\
