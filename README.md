@@ -10,17 +10,19 @@ Written in Rust for maximum performance and reliability.
 
 ## Latest Benchmark Results
 
-*Last updated: 2026-02-22 02:57 UTC*
+*Last updated: 2026-02-22 03:04 UTC*
 
 | Provider | Time | Tool Calls | Errors | Score | Grade |
 |----------|------|------------|--------|-------|-------|
 | docker-image | 1m 0s | 1 | 1 | 0.0 | F |
-| microvm | 0.0s | 1 | 1 | 0.0 | F |
+| microvm | 2.5s | 1 | 1 | 0.0 | F |
 
-**MicroVM is 2820.0x faster than Docker** (60.5s vs 0.0s)
+**MicroVM is 23.9x faster than Docker** (60.5s vs 2.5s)
 
 > Benchmarks run automatically in CI using [sandbox-bench](https://github.com/zkwentz/sandbox-bench).
 > See [workflow runs](https://github.com/zkwentz/openenvvm/actions/workflows/benchmark.yml) for details.
+
+## Performance
 
 ## Performance
 
