@@ -218,14 +218,20 @@ RUN if [ -f /app/env/server/requirements.txt ]; then \
         pip3 install --break-system-packages -r /app/env/server/requirements.txt || true; \
     fi
 RUN printf '#!/bin/sh\n\
+echo "MicroVM init starting..."\n\
+\n\
 # Configure network\n\
-ip addr add 172.16.0.2/24 dev eth0\n\
-ip link set eth0 up\n\
-ip route add default via 172.16.0.1 dev eth0\n\
+echo "Configuring network..."\n\
+ip addr add 172.16.0.2/24 dev eth0 2>&1 || echo "ip addr failed"\n\
+ip link set eth0 up 2>&1 || echo "ip link failed"\n\
+ip route add default via 172.16.0.1 dev eth0 2>&1 || echo "ip route failed"\n\
+echo "Network configured"\n\
+ip addr show eth0\n\
 \n\
 # Start the application\n\
+echo "Starting uvicorn server..."\n\
 cd /app/env\n\
-exec uvicorn server.app:app --host 0.0.0.0 --port 8000\n' > /init.sh && chmod 755 /init.sh
+exec uvicorn server.app:app --host 0.0.0.0 --port 8000 2>&1\n' > /init.sh && chmod 755 /init.sh
 "#,
         env_name = env_name
     );
