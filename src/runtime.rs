@@ -112,6 +112,35 @@ pub async fn start_microvm(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("vm-{}-{}", std::process::id(), timestamp_millis()));
 
+    eprintln!("Starting MicroVM from: {}", package.display());
+
+    // Verify package files exist
+    let kernel_path = package.join("vmlinux");
+    let rootfs_path = package.join("rootfs.ext4");
+    let config_path = package.join("config.json");
+
+    if !kernel_path.exists() {
+        return Err(MicroVMError::InvalidEnvPath(format!(
+            "Kernel not found: {}",
+            kernel_path.display()
+        )));
+    }
+    if !rootfs_path.exists() {
+        return Err(MicroVMError::InvalidEnvPath(format!(
+            "Rootfs not found: {}",
+            rootfs_path.display()
+        )));
+    }
+    if !config_path.exists() {
+        return Err(MicroVMError::InvalidEnvPath(format!(
+            "Config not found: {}",
+            config_path.display()
+        )));
+    }
+
+    eprintln!("  Kernel: {} ({} bytes)", kernel_path.display(), std::fs::metadata(&kernel_path)?.len());
+    eprintln!("  Rootfs: {} ({} bytes)", rootfs_path.display(), std::fs::metadata(&rootfs_path)?.len());
+
     // Setup networking - use tap0 to match config.json
     let tap_device = "tap0".to_string();
     setup_networking(&tap_device, gateway).await?;
@@ -123,8 +152,9 @@ pub async fn start_microvm(
     }
 
     // Update config.json with correct TAP device name (in case it differs)
-    let config_path = package.join("config.json");
     update_config_tap_device(&config_path, &tap_device)?;
+
+    eprintln!("  Starting Firecracker with config: {}", config_path.display());
 
     // Start Firecracker
     let mut process = Command::new("firecracker")
@@ -163,15 +193,38 @@ pub async fn start_microvm(
 
 /// Setup TAP device and networking for the VM
 async fn setup_networking(tap_device: &str, gateway: &str) -> Result<()> {
+    eprintln!("  Setting up TAP device: {}", tap_device);
+
     // Create TAP device (ignore error if it already exists)
-    let _ = run_sudo(&["ip", "tuntap", "add", "dev", tap_device, "mode", "tap"]).await;
+    let result = run_sudo(&["ip", "tuntap", "add", "dev", tap_device, "mode", "tap"]).await;
+    if let Err(e) = &result {
+        eprintln!("    TAP device creation (may already exist): {}", e);
+    }
 
     // Configure TAP device (ignore error if IP already assigned)
     let gateway_cidr = format!("{}/24", gateway);
-    let _ = run_sudo(&["ip", "addr", "add", &gateway_cidr, "dev", tap_device]).await;
+    let result = run_sudo(&["ip", "addr", "add", &gateway_cidr, "dev", tap_device]).await;
+    if let Err(e) = &result {
+        eprintln!("    IP address assignment (may already exist): {}", e);
+    }
 
     // Bring up the device
+    eprintln!("  Bringing up TAP device...");
     run_sudo(&["ip", "link", "set", tap_device, "up"]).await?;
+
+    // Verify TAP device exists
+    let output = Command::new("ip")
+        .args(["link", "show", tap_device])
+        .output()
+        .await?;
+    if output.status.success() {
+        eprintln!("  TAP device {} is ready", tap_device);
+    } else {
+        return Err(MicroVMError::CommandFailed {
+            command: format!("ip link show {}", tap_device),
+            message: "TAP device not found after creation".to_string(),
+        });
+    }
 
     // Enable IP forwarding
     let _ = run_sudo(&["sysctl", "-w", "net.ipv4.ip_forward=1"]).await;
@@ -216,28 +269,38 @@ async fn wait_for_socket_or_crash(
     use tokio::io::AsyncReadExt;
 
     let start = std::time::Instant::now();
+    eprintln!("  Waiting for Firecracker socket: {}", socket_path.display());
 
     while start.elapsed() < timeout_duration {
         // Check if Firecracker crashed
         if let Ok(Some(status)) = process.try_wait() {
-            let stderr = if let Some(ref mut stderr) = process.stderr {
-                let mut buf = String::new();
-                let _ = stderr.read_to_string(&mut buf).await;
-                buf
-            } else {
-                String::new()
-            };
+            let mut stdout_buf = String::new();
+            let mut stderr_buf = String::new();
+
+            if let Some(ref mut stdout) = process.stdout {
+                let _ = stdout.read_to_string(&mut stdout_buf).await;
+            }
+            if let Some(ref mut stderr) = process.stderr {
+                let _ = stderr.read_to_string(&mut stderr_buf).await;
+            }
+
+            let mut message = format!("Firecracker exited with status {}", status);
+            if !stdout_buf.is_empty() {
+                message.push_str(&format!(". stdout: {}", stdout_buf));
+            }
+            if !stderr_buf.is_empty() {
+                message.push_str(&format!(". stderr: {}", stderr_buf));
+            }
+
             return Err(MicroVMError::CommandFailed {
                 command: "firecracker".to_string(),
-                message: format!(
-                    "Firecracker exited with status {}. stderr: {}",
-                    status, stderr
-                ),
+                message,
             });
         }
 
         // Check if socket exists
         if socket_path.exists() {
+            eprintln!("  Firecracker socket is ready");
             return Ok(());
         }
         sleep(Duration::from_millis(100)).await;
