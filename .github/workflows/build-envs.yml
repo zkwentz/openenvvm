@@ -186,13 +186,32 @@ jobs:
       - name: Start ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
         run: |
-          # Start the VM in background with verbose output
-          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 2>&1 &
+          # Start the VM in background, capturing output to a file
+          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 > /tmp/vm.log 2>&1 &
           echo $! > /tmp/vm.pid
 
           # Wait for VM to be ready
           echo "Waiting for VM to boot..."
           sleep 30
+
+          # Show VM output
+          echo "=== VM Output ==="
+          cat /tmp/vm.log || true
+
+      - name: Debug network connectivity
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          echo "=== Host network state ==="
+          ip addr show tap0 || true
+          ip route || true
+
+          echo ""
+          echo "=== Ping test ==="
+          ping -c 3 172.16.0.2 || true
+
+          echo ""
+          echo "=== Curl test ==="
+          curl -v --connect-timeout 5 http://172.16.0.2:8000/health || true
 
       - name: Validate ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
@@ -289,12 +308,23 @@ jobs:
       - name: Test ${{ matrix.env }} MicroVM (basic)
         if: steps.kvm.outputs.available == 'true'
         run: |
-          # Start the VM in background with verbose output
-          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 2>&1 &
+          # Start the VM in background, capturing output
+          sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 > /tmp/vm.log 2>&1 &
           VM_PID=$!
 
           # Wait for VM to boot
           sleep 20
+
+          # Show VM output
+          echo "=== VM Output ==="
+          cat /tmp/vm.log || true
+
+          # Debug network
+          echo ""
+          echo "=== Network debug ==="
+          ip addr show tap0 || true
+          ping -c 2 172.16.0.2 || true
+          curl -v --connect-timeout 5 http://172.16.0.2:8000/health || true
 
           # Run basic validation (generic validator)
           python scripts/validate_microvm.py \
