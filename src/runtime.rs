@@ -112,8 +112,8 @@ pub async fn start_microvm(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("vm-{}-{}", std::process::id(), timestamp_millis()));
 
-    // Setup networking
-    let tap_device = format!("tap-{}", &vm_id[..vm_id.len().min(8)]);
+    // Setup networking - use tap0 to match config.json
+    let tap_device = "tap0".to_string();
     setup_networking(&tap_device, gateway).await?;
 
     // Create API socket path
@@ -122,8 +122,11 @@ pub async fn start_microvm(
         tokio::fs::remove_file(&socket_path).await?;
     }
 
-    // Start Firecracker
+    // Update config.json with correct TAP device name (in case it differs)
     let config_path = package.join("config.json");
+    update_config_tap_device(&config_path, &tap_device)?;
+
+    // Start Firecracker
     let process = Command::new("firecracker")
         .args([
             "--api-sock",
@@ -301,6 +304,29 @@ fn timestamp_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// Update the TAP device name in the config.json file
+fn update_config_tap_device(config_path: &Path, tap_device: &str) -> Result<()> {
+    let content = std::fs::read_to_string(config_path)?;
+    let mut config: serde_json::Value = serde_json::from_str(&content)?;
+
+    // Update the network interface host_dev_name
+    if let Some(interfaces) = config.get_mut("network-interfaces") {
+        if let Some(arr) = interfaces.as_array_mut() {
+            for iface in arr {
+                if let Some(obj) = iface.as_object_mut() {
+                    obj.insert(
+                        "host_dev_name".to_string(),
+                        serde_json::Value::String(tap_device.to_string()),
+                    );
+                }
+            }
+        }
+    }
+
+    std::fs::write(config_path, serde_json::to_string_pretty(&config)?)?;
+    Ok(())
 }
 
 #[cfg(test)]
