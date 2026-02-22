@@ -220,6 +220,10 @@ RUN if [ -f /app/env/server/requirements.txt ]; then \
 RUN printf '#!/bin/sh\n\
 echo "MicroVM init starting..."\n\
 \n\
+# Set up environment\n\
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\
+export HOME=/root\n\
+\n\
 # Configure network\n\
 echo "Configuring network..."\n\
 ip addr add 172.16.0.2/24 dev eth0 2>&1 || echo "ip addr failed"\n\
