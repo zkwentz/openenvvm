@@ -183,9 +183,35 @@ jobs:
           file ${{ matrix.env }}.microvm/vmlinux || echo "vmlinux file check failed"
           file ${{ matrix.env }}.microvm/rootfs.ext4 || echo "rootfs file check failed"
 
+      - name: Setup TAP device manually
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          echo "=== Setting up TAP device ==="
+          sudo ip tuntap add dev tap0 mode tap || echo "TAP device might already exist"
+          sudo ip addr add 172.16.0.1/24 dev tap0 || echo "IP might already be assigned"
+          sudo ip link set tap0 up
+          ip addr show tap0
+          echo "=== TAP device setup complete ==="
+
+      - name: Test Firecracker directly
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          echo "=== Testing Firecracker directly ==="
+          cd ${{ matrix.env }}.microvm
+
+          # Try running Firecracker directly to see error
+          timeout 5 sudo firecracker \
+            --api-sock /tmp/test-fc.socket \
+            --config-file config.json 2>&1 || true
+
+          echo "=== Firecracker test complete ==="
+
       - name: Start ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
         run: |
+          # Clean up any previous socket
+          sudo rm -f /tmp/test-fc.socket
+
           # Start the VM in background with verbose output
           sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 2>&1 &
           echo $! > /tmp/vm.pid
