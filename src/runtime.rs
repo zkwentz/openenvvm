@@ -170,6 +170,28 @@ pub async fn start_microvm(
         .stderr(Stdio::piped())
         .spawn()?;
 
+    // Spawn a task to read and print Firecracker's stdout (VM console)
+    if let Some(stdout) = process.stdout.take() {
+        tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                eprintln!("[VM] {}", line);
+            }
+        });
+    }
+
+    // Spawn a task to read and print Firecracker's stderr
+    if let Some(stderr) = process.stderr.take() {
+        tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                eprintln!("[FC] {}", line);
+            }
+        });
+    }
+
     // Wait for socket, checking if process dies
     let timeout_duration = Duration::from_secs(10);
     wait_for_socket_or_crash(&socket_path, &mut process, timeout_duration).await?;
