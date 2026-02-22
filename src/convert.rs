@@ -11,8 +11,8 @@ use tempfile::TempDir;
 const DEFAULT_KERNEL_URL: &str =
     "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.6/x86_64/vmlinux-5.10.198";
 
-/// Base Alpine image for rootfs
-const ALPINE_BASE: &str = "alpine:3.19";
+/// Builder Docker image (Alpine with necessary tools)
+const BUILDER_IMAGE: &str = "alpine:3.19";
 
 /// Firecracker VM configuration
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,6 +64,8 @@ pub struct Metadata {
 
 /// Convert an OpenEnv environment to a MicroVM package.
 ///
+/// This function uses Docker to perform the build, so it works on macOS, Linux, and Windows.
+///
 /// # Arguments
 /// * `env_path` - Path to OpenEnv environment directory or HuggingFace spec (hf:org/repo)
 /// * `output_path` - Output path for the .microvm package
@@ -74,12 +76,8 @@ pub struct Metadata {
 /// # Returns
 /// Path to the created .microvm package
 ///
-/// # Platform Requirements
-/// This function requires Linux with:
-/// - `dd`, `mkfs.ext4` for creating filesystem images
-/// - `mount -o loop` for mounting images
-/// - `docker` for extracting Alpine base
-/// - `chroot` for installing packages
+/// # Requirements
+/// - Docker must be installed and running
 pub fn convert_env_to_microvm(
     env_path: &str,
     output_path: &Path,
@@ -87,23 +85,9 @@ pub fn convert_env_to_microvm(
     memory_mb: u32,
     vcpu_count: u32,
 ) -> Result<PathBuf> {
-    // Check platform
-    #[cfg(not(target_os = "linux"))]
-    {
-        return Err(MicroVMError::CommandFailed {
-            command: "convert".to_string(),
-            message: "The convert command requires Linux. It uses Linux-specific tools:\n  \
-                      - dd, mkfs.ext4 for creating filesystem images\n  \
-                      - mount -o loop for mounting images\n  \
-                      - docker for extracting Alpine base\n  \
-                      - chroot for installing packages\n\n\
-                      Please run this on a Linux machine or in a Linux VM/container."
-                .to_string(),
-        });
-    }
+    // Check Docker is available
+    check_docker()?;
 
-    #[cfg(target_os = "linux")]
-    {
     let output = output_path.to_path_buf();
     fs::create_dir_all(&output)?;
 
@@ -111,13 +95,17 @@ pub fn convert_env_to_microvm(
     let tmp = tmpdir.path();
 
     // Step 1: Resolve environment source
+    println!("  Resolving environment source...");
     let env_dir = resolve_env_source(env_path, tmp)?;
+    let env_dir = fs::canonicalize(&env_dir)?;
 
-    // Step 2: Build rootfs
-    let rootfs_path = tmp.join("rootfs.ext4");
-    build_rootfs(&env_dir, &rootfs_path, 512)?;
+    // Step 2: Build rootfs using Docker
+    println!("  Building rootfs (this may take a moment)...");
+    let rootfs_path = output.join("rootfs.ext4");
+    build_rootfs_docker(&env_dir, &rootfs_path, 512)?;
 
     // Step 3: Handle kernel
+    println!("  Downloading kernel...");
     let kernel_dst = output.join("vmlinux");
     if let Some(kp) = kernel_path {
         fs::copy(kp, &kernel_dst)?;
@@ -125,15 +113,13 @@ pub fn convert_env_to_microvm(
         download_kernel(&kernel_dst)?;
     }
 
-    // Step 4: Copy rootfs to output
-    fs::copy(&rootfs_path, output.join("rootfs.ext4"))?;
-
-    // Step 5: Generate Firecracker config
+    // Step 4: Generate Firecracker config
+    println!("  Generating configuration...");
     let config = generate_config("vmlinux", "rootfs.ext4", memory_mb, vcpu_count);
     let config_json = serde_json::to_string_pretty(&config)?;
     fs::write(output.join("config.json"), config_json)?;
 
-    // Step 6: Create metadata
+    // Step 5: Create metadata
     let env_name = env_dir
         .file_name()
         .and_then(|n| n.to_str())
@@ -150,6 +136,25 @@ pub fn convert_env_to_microvm(
     fs::write(output.join("metadata.json"), metadata_json)?;
 
     Ok(output)
+}
+
+/// Check if Docker is available
+fn check_docker() -> Result<()> {
+    let output = Command::new("docker").args(["version"]).output();
+
+    match output {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(MicroVMError::CommandFailed {
+            command: "docker version".to_string(),
+            message: format!(
+                "Docker is not running. Please start Docker Desktop.\n{}",
+                String::from_utf8_lossy(&o.stderr)
+            ),
+        }),
+        Err(_) => Err(MicroVMError::CommandFailed {
+            command: "docker".to_string(),
+            message: "Docker is not installed. Please install Docker Desktop from https://docker.com".to_string(),
+        }),
     }
 }
 
@@ -161,7 +166,7 @@ fn resolve_env_source(env_path: &str, tmp: &Path) -> Result<PathBuf> {
         let url = format!("https://huggingface.co/spaces/{}", repo_id);
 
         let output = Command::new("git")
-            .args(["clone", &url, env_dir.to_str().unwrap()])
+            .args(["clone", "--depth", "1", &url, env_dir.to_str().unwrap()])
             .output()?;
 
         if !output.status.success() {
@@ -181,115 +186,122 @@ fn resolve_env_source(env_path: &str, tmp: &Path) -> Result<PathBuf> {
     }
 }
 
-/// Build ext4 rootfs from OpenEnv environment
-fn build_rootfs(env_dir: &Path, output_path: &Path, size_mb: u32) -> Result<()> {
-    // Create empty ext4 image
-    run_command(
-        "dd",
-        &[
-            "if=/dev/zero",
-            &format!("of={}", output_path.display()),
-            "bs=1M",
-            &format!("count={}", size_mb),
-        ],
-    )?;
+/// Build ext4 rootfs using Docker (works on macOS, Linux, Windows)
+fn build_rootfs_docker(env_dir: &Path, output_path: &Path, size_mb: u32) -> Result<()> {
+    let output_dir = output_path.parent().unwrap();
+    let output_filename = output_path.file_name().unwrap().to_str().unwrap();
 
-    run_command("mkfs.ext4", &[output_path.to_str().unwrap()])?;
+    // Create a build script that will run inside Docker
+    let build_script = format!(
+        r#"#!/bin/sh
+set -e
 
-    // Mount and populate
-    let mount_dir = TempDir::new()?;
-    let mount_path = mount_dir.path();
+# Create ext4 image
+dd if=/dev/zero of=/output/{filename} bs=1M count={size}
+mkfs.ext4 -F /output/{filename}
 
-    run_command(
-        "sudo",
-        &[
-            "mount",
-            "-o",
-            "loop",
-            output_path.to_str().unwrap(),
-            mount_path.to_str().unwrap(),
-        ],
-    )?;
+# Mount the image
+mkdir -p /mnt/rootfs
+mount -o loop /output/{filename} /mnt/rootfs
 
-    // Use a closure to ensure we unmount even on error
-    let result = (|| -> Result<()> {
-        // Extract Alpine base
-        let mount_str = mount_path.to_str().unwrap();
-        run_command(
-            "docker",
-            &[
-                "run",
-                "--rm",
-                "-v",
-                &format!("{}:/mnt", mount_str),
-                ALPINE_BASE,
-                "sh",
-                "-c",
-                "cp -a / /mnt/ 2>/dev/null || true",
-            ],
-        )?;
+# Copy Alpine base filesystem
+cp -a /. /mnt/rootfs/ 2>/dev/null || true
 
-        // Install Python and dependencies
-        run_command(
-            "sudo",
-            &[
-                "chroot",
-                mount_str,
-                "apk",
-                "add",
-                "--no-cache",
-                "python3",
-                "py3-pip",
-                "py3-uvicorn",
-            ],
-        )?;
+# Install Python and dependencies in the rootfs
+chroot /mnt/rootfs /bin/sh -c "apk add --no-cache python3 py3-pip py3-uvicorn"
 
-        // Copy environment code
-        let env_dest = mount_path.join("app/env");
-        fs::create_dir_all(&env_dest)?;
-        copy_dir_recursive(env_dir, &env_dest)?;
+# Copy environment code
+mkdir -p /mnt/rootfs/app/env
+cp -r /env/. /mnt/rootfs/app/env/
 
-        // Install environment dependencies
-        let requirements = env_dir.join("server/requirements.txt");
-        if requirements.exists() {
-            run_command(
-                "sudo",
-                &[
-                    "chroot",
-                    mount_str,
-                    "pip3",
-                    "install",
-                    "-r",
-                    "/app/env/server/requirements.txt",
-                ],
-            )?;
-        }
+# Install environment dependencies if requirements.txt exists
+if [ -f /mnt/rootfs/app/env/server/requirements.txt ]; then
+    chroot /mnt/rootfs /bin/sh -c "pip3 install --break-system-packages -r /app/env/server/requirements.txt" || true
+fi
 
-        // Create init script
-        let init_script = mount_path.join("init.sh");
-        fs::write(
-            &init_script,
-            "#!/bin/sh\ncd /app/env\nexec uvicorn server.app:app --host 0.0.0.0 --port 8000\n",
-        )?;
+# Create init script
+cat > /mnt/rootfs/init.sh << 'INITEOF'
+#!/bin/sh
+cd /app/env
+exec uvicorn server.app:app --host 0.0.0.0 --port 8000
+INITEOF
+chmod 755 /mnt/rootfs/init.sh
 
-        // Make init script executable
-        run_command("sudo", &["chmod", "755", init_script.to_str().unwrap()])?;
+# Unmount
+umount /mnt/rootfs
 
-        Ok(())
-    })();
+echo "Rootfs build complete!"
+"#,
+        filename = output_filename,
+        size = size_mb
+    );
 
-    // Always unmount
-    let _ = run_command("sudo", &["umount", mount_path.to_str().unwrap()]);
+    // Write build script to temp file
+    let script_path = output_dir.join("build_rootfs.sh");
+    fs::write(&script_path, &build_script)?;
 
-    result
+    // Run Docker with privileged mode (needed for loop mounting)
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--privileged",
+            "-v",
+            &format!("{}:/env:ro", env_dir.display()),
+            "-v",
+            &format!("{}:/output", output_dir.display()),
+            BUILDER_IMAGE,
+            "/bin/sh",
+            "/output/build_rootfs.sh",
+        ])
+        .output()?;
+
+    // Clean up build script
+    let _ = fs::remove_file(&script_path);
+
+    if !output.status.success() {
+        return Err(MicroVMError::CommandFailed {
+            command: "docker run (build rootfs)".to_string(),
+            message: format!(
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        });
+    }
+
+    // Verify the rootfs was created
+    if !output_path.exists() {
+        return Err(MicroVMError::CommandFailed {
+            command: "build rootfs".to_string(),
+            message: "Rootfs file was not created".to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 /// Download the default Firecracker kernel
 fn download_kernel(output_path: &Path) -> Result<()> {
-    run_command(
-        "curl",
-        &["-L", "-o", output_path.to_str().unwrap(), DEFAULT_KERNEL_URL],
-    )
+    let output = Command::new("curl")
+        .args([
+            "-L",
+            "-f",
+            "--progress-bar",
+            "-o",
+            output_path.to_str().unwrap(),
+            DEFAULT_KERNEL_URL,
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(MicroVMError::CommandFailed {
+            command: "curl (download kernel)".to_string(),
+            message: String::from_utf8_lossy(&output.stderr).to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 /// Generate Firecracker VM configuration
@@ -320,41 +332,6 @@ fn generate_config(
             host_dev_name: "tap0".to_string(),
         }],
     }
-}
-
-/// Run a command and return an error if it fails
-fn run_command(cmd: &str, args: &[&str]) -> Result<()> {
-    let output = Command::new(cmd).args(args).output()?;
-
-    if !output.status.success() {
-        return Err(MicroVMError::CommandFailed {
-            command: format!("{} {}", cmd, args.join(" ")),
-            message: String::from_utf8_lossy(&output.stderr).to_string(),
-        });
-    }
-
-    Ok(())
-}
-
-/// Recursively copy a directory
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    if !dst.exists() {
-        fs::create_dir_all(dst)?;
-    }
-
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path)?;
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
