@@ -187,81 +187,149 @@ fn resolve_env_source(env_path: &str, tmp: &Path) -> Result<PathBuf> {
 }
 
 /// Build ext4 rootfs using Docker (works on macOS, Linux, Windows)
+///
+/// This uses a two-phase approach for speed:
+/// 1. Build a container with all dependencies installed
+/// 2. Export as tarball and create ext4 image
 fn build_rootfs_docker(env_dir: &Path, output_path: &Path, size_mb: u32) -> Result<()> {
-    let output_dir = output_path.parent().unwrap();
-    let output_filename = output_path.file_name().unwrap().to_str().unwrap();
+    let output_dir = fs::canonicalize(output_path.parent().unwrap())?;
+    let container_name = format!("openenv-build-{}", std::process::id());
 
-    // Create a build script that will run inside Docker
+    // Phase 1: Build container with all dependencies
+    println!("    Creating build container...");
+
+    // Get the env directory name for the COPY command
+    let env_name = env_dir.file_name().unwrap().to_str().unwrap();
+
+    // Create a Dockerfile for the build
+    let dockerfile = format!(
+        r#"FROM alpine:3.19
+RUN apk add --no-cache python3 py3-pip
+RUN pip3 install --break-system-packages uvicorn
+COPY {env_name} /app/env
+RUN if [ -f /app/env/server/requirements.txt ]; then \
+        pip3 install --break-system-packages -r /app/env/server/requirements.txt || true; \
+    fi
+RUN printf '#!/bin/sh\ncd /app/env\nexec uvicorn server.app:app --host 0.0.0.0 --port 8000\n' > /init.sh && chmod 755 /init.sh
+"#,
+        env_name = env_name
+    );
+
+    let dockerfile_path = output_dir.join("Dockerfile.microvm");
+    fs::write(&dockerfile_path, &dockerfile)?;
+
+    // Build the container image - use the parent of env_dir as context
+    let build_context = env_dir.parent().unwrap();
+    let output = Command::new("docker")
+        .args([
+            "build",
+            "-t",
+            &container_name,
+            "-f",
+            dockerfile_path.to_str().unwrap(),
+            build_context.to_str().unwrap(),
+        ])
+        .output()?;
+
+    let _ = fs::remove_file(&dockerfile_path);
+
+    if !output.status.success() {
+        return Err(MicroVMError::CommandFailed {
+            command: "docker build".to_string(),
+            message: format!(
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        });
+    }
+
+    // Phase 2: Export container and create ext4 image
+    println!("    Exporting filesystem...");
+
+    // Create a container (don't run it)
+    let output = Command::new("docker")
+        .args(["create", "--name", &format!("{}-export", container_name), &container_name])
+        .output()?;
+
+    if !output.status.success() {
+        let _ = Command::new("docker").args(["rmi", "-f", &container_name]).output();
+        return Err(MicroVMError::CommandFailed {
+            command: "docker create".to_string(),
+            message: String::from_utf8_lossy(&output.stderr).to_string(),
+        });
+    }
+
+    // Export to tarball
+    let tarball_path = output_dir.join("rootfs.tar");
+    let output = Command::new("docker")
+        .args([
+            "export",
+            "-o",
+            tarball_path.to_str().unwrap(),
+            &format!("{}-export", container_name),
+        ])
+        .output()?;
+
+    // Cleanup container
+    let _ = Command::new("docker").args(["rm", "-f", &format!("{}-export", container_name)]).output();
+    let _ = Command::new("docker").args(["rmi", "-f", &container_name]).output();
+
+    if !output.status.success() {
+        return Err(MicroVMError::CommandFailed {
+            command: "docker export".to_string(),
+            message: String::from_utf8_lossy(&output.stderr).to_string(),
+        });
+    }
+
+    // Phase 3: Create ext4 image from tarball (using Docker for Linux tools)
+    println!("    Creating ext4 filesystem...");
+
     let build_script = format!(
         r#"#!/bin/sh
 set -e
+apk add --no-cache e2fsprogs tar
 
 # Create ext4 image
-dd if=/dev/zero of=/output/{filename} bs=1M count={size}
-mkfs.ext4 -F /output/{filename}
+dd if=/dev/zero of=/output/rootfs.ext4 bs=1M count={size}
+mkfs.ext4 -F /output/rootfs.ext4
 
-# Mount the image
+# Mount and extract
 mkdir -p /mnt/rootfs
-mount -o loop /output/{filename} /mnt/rootfs
-
-# Copy Alpine base filesystem
-cp -a /. /mnt/rootfs/ 2>/dev/null || true
-
-# Install Python and dependencies in the rootfs
-chroot /mnt/rootfs /bin/sh -c "apk add --no-cache python3 py3-pip py3-uvicorn"
-
-# Copy environment code
-mkdir -p /mnt/rootfs/app/env
-cp -r /env/. /mnt/rootfs/app/env/
-
-# Install environment dependencies if requirements.txt exists
-if [ -f /mnt/rootfs/app/env/server/requirements.txt ]; then
-    chroot /mnt/rootfs /bin/sh -c "pip3 install --break-system-packages -r /app/env/server/requirements.txt" || true
-fi
-
-# Create init script
-cat > /mnt/rootfs/init.sh << 'INITEOF'
-#!/bin/sh
-cd /app/env
-exec uvicorn server.app:app --host 0.0.0.0 --port 8000
-INITEOF
-chmod 755 /mnt/rootfs/init.sh
-
-# Unmount
+mount -o loop /output/rootfs.ext4 /mnt/rootfs
+tar -xf /output/rootfs.tar -C /mnt/rootfs
 umount /mnt/rootfs
 
-echo "Rootfs build complete!"
+# Clean up tarball
+rm /output/rootfs.tar
+
+echo "Rootfs complete!"
 "#,
-        filename = output_filename,
         size = size_mb
     );
 
-    // Write build script to temp file
-    let script_path = output_dir.join("build_rootfs.sh");
+    let script_path = output_dir.join("finalize.sh");
     fs::write(&script_path, &build_script)?;
 
-    // Run Docker with privileged mode (needed for loop mounting)
     let output = Command::new("docker")
         .args([
             "run",
             "--rm",
             "--privileged",
             "-v",
-            &format!("{}:/env:ro", env_dir.display()),
-            "-v",
             &format!("{}:/output", output_dir.display()),
             BUILDER_IMAGE,
             "/bin/sh",
-            "/output/build_rootfs.sh",
+            "/output/finalize.sh",
         ])
         .output()?;
 
-    // Clean up build script
     let _ = fs::remove_file(&script_path);
+    let _ = fs::remove_file(&tarball_path); // In case it wasn't deleted
 
     if !output.status.success() {
         return Err(MicroVMError::CommandFailed {
-            command: "docker run (build rootfs)".to_string(),
+            command: "docker run (finalize)".to_string(),
             message: format!(
                 "stdout: {}\nstderr: {}",
                 String::from_utf8_lossy(&output.stdout),
