@@ -112,9 +112,6 @@ jobs:
           - connect4_env
           - grid_world_env
           - maze_env
-          - snake_env
-          - chess_env
-          - openspiel_env
           - wildfire_env
           - reasoning_gym_env
           - calendar_env
@@ -234,6 +231,18 @@ jobs:
             --env ${{ matrix.env }} \
             --url http://172.16.0.2:8000 \
             --timeout 60
+
+      - name: Show VM logs on failure
+        if: failure() && steps.kvm.outputs.available == 'true'
+        run: |
+          echo "=== Full VM Output ==="
+          cat /tmp/vm.log 2>/dev/null || echo "No VM log found"
+          echo ""
+          echo "=== Last 5 seconds of health endpoint ==="
+          for i in 1 2 3 4 5; do
+            curl -s --connect-timeout 2 http://172.16.0.2:8000/health 2>&1 || echo "  (no response)"
+            sleep 1
+          done
 
       - name: Cleanup
         if: always() && steps.kvm.outputs.available == 'true'

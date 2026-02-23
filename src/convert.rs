@@ -207,19 +207,25 @@ fn build_rootfs_docker(env_dir: &Path, output_path: &Path, size_mb: u32) -> Resu
     // Install openenv_core which is required by most OpenEnv environments
     let dockerfile = format!(
         r#"FROM alpine:3.19
-RUN apk add --no-cache python3 py3-pip git iproute2
+RUN apk add --no-cache python3 py3-pip git iproute2 \
+    build-base python3-dev libffi-dev
 RUN pip3 install --break-system-packages uvicorn fastapi
 
 # Install openenv from the OpenEnv repository (provides openenv.core module)
 RUN pip3 install --break-system-packages git+https://github.com/meta-pytorch/OpenEnv.git || true
 
 COPY {env_name} /app/env
+# Install env deps from requirements.txt if available
 RUN if [ -f /app/env/server/requirements.txt ]; then \
         pip3 install --break-system-packages -r /app/env/server/requirements.txt || true; \
     fi
-# Fallback: install from pyproject.toml if no requirements.txt exists
-RUN if [ -f /app/env/pyproject.toml ] && [ ! -f /app/env/server/requirements.txt ]; then \
-        pip3 install --break-system-packages /app/env || true; \
+# Install from pyproject.toml (use --no-deps to avoid re-resolving openenv-core)
+RUN if [ -f /app/env/pyproject.toml ]; then \
+        pip3 install --break-system-packages --no-deps /app/env || true; \
+    fi
+# Install pyproject.toml dependencies separately (skip already-installed openenv packages)
+RUN if [ -f /app/env/pyproject.toml ]; then \
+        pip3 install --break-system-packages /app/env 2>/dev/null || true; \
     fi
 RUN printf '#!/bin/sh\n\
 echo "MicroVM init starting..."\n\
