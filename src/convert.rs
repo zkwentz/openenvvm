@@ -217,6 +217,10 @@ COPY {env_name} /app/env
 RUN if [ -f /app/env/server/requirements.txt ]; then \
         pip3 install --break-system-packages -r /app/env/server/requirements.txt || true; \
     fi
+# Fallback: install from pyproject.toml if no requirements.txt exists
+RUN if [ -f /app/env/pyproject.toml ] && [ ! -f /app/env/server/requirements.txt ]; then \
+        pip3 install --break-system-packages /app/env || true; \
+    fi
 RUN printf '#!/bin/sh\n\
 echo "MicroVM init starting..."\n\
 \n\

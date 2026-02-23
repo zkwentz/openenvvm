@@ -434,6 +434,142 @@ def validate_dm_control_env(url: str) -> bool:
     return True
 
 
+def validate_wildfire_env(url: str) -> bool:
+    """Validate wildfire_env MicroVM.
+
+    WildfireAction: {action: str, x: Optional[int], y: Optional[int]}
+    Actions: "break", "water", "wait"
+    Tests: pyproject.toml-only install (no requirements.txt)
+    """
+    print("\n=== Validating wildfire_env ===\n")
+
+    if not wait_for_health(url):
+        return False
+
+    obs = test_reset(url)
+    if obs is None:
+        return False
+
+    # WildfireAction: action is one of "break", "water", "wait"
+    # "wait" requires no coordinates
+    result = test_step(url, {"action": "wait"})
+    if result is None:
+        return False
+
+    # Try an action with coordinates
+    result = test_step(url, {"action": "water", "x": 0, "y": 0})
+    if result is None:
+        return False
+
+    print("\n=== wildfire_env validation PASSED ===\n")
+    return True
+
+
+def validate_reasoning_gym_env(url: str) -> bool:
+    """Validate reasoning_gym_env MicroVM.
+
+    ReasoningGymAction: {answer: str}
+    Reset returns a question in the observation.
+    Tests: external pip package (reasoning-gym)
+    """
+    print("\n=== Validating reasoning_gym_env ===\n")
+
+    if not wait_for_health(url):
+        return False
+
+    obs = test_reset(url)
+    if obs is None:
+        return False
+
+    # Observation should contain a question
+    question = obs.get("question", "")
+    if question:
+        print(f"  Question: {str(question)[:150]}...")
+
+    # ReasoningGymAction: just provide an answer string
+    result = test_step(url, {"answer": "42"})
+    if result is None:
+        return False
+
+    print("\n=== reasoning_gym_env validation PASSED ===\n")
+    return True
+
+
+def validate_calendar_env(url: str) -> bool:
+    """Validate calendar_env MicroVM (MCP environment).
+
+    MCP tool-use environment with calendar operations.
+    Tools: create_event, list_events, update_event, delete_event, etc.
+    Tests: MCP pattern with SQLite/SQLAlchemy backend
+    """
+    print("\n=== Validating calendar_env ===\n")
+
+    if not wait_for_health(url):
+        return False
+
+    obs = test_reset(url)
+    if obs is None:
+        return False
+
+    # Calendar env is MCP - list tools first
+    tools = test_mcp_list_tools(url)
+    if tools is not None:
+        tool_names = [t.get("name") for t in tools]
+        print(f"  Available tools: {tool_names}")
+
+        # Try listing events (should work even with empty calendar)
+        if "list_events" in tool_names:
+            if not test_mcp_call_tool(url, "list_events", {}):
+                return False
+        elif "get_events" in tool_names:
+            if not test_mcp_call_tool(url, "get_events", {}):
+                return False
+
+        # Try creating an event
+        if "create_event" in tool_names:
+            test_mcp_call_tool(url, "create_event", {
+                "title": "Test Event",
+                "start_time": "2025-01-01T10:00:00",
+                "end_time": "2025-01-01T11:00:00",
+            })
+
+    print("\n=== calendar_env validation PASSED ===\n")
+    return True
+
+
+def validate_coding_env(url: str) -> bool:
+    """Validate coding_env MicroVM.
+
+    CodeAction: {code: str}
+    Returns: stdout, stderr, exit_code
+    Tests: code execution inside MicroVM, smolagents dependency
+    """
+    print("\n=== Validating coding_env ===\n")
+
+    if not wait_for_health(url):
+        return False
+
+    obs = test_reset(url)
+    if obs is None:
+        return False
+
+    # CodeAction: execute Python code
+    result = test_step(url, {"code": "print('hello from microvm')"})
+    if result is None:
+        return False
+
+    # Verify we got execution output
+    stdout = result.get("stdout", "")
+    if stdout:
+        print(f"  stdout: {stdout[:200]}")
+    exit_code = result.get("exit_code")
+    if exit_code is not None:
+        print(f"  exit_code: {exit_code}")
+
+    print("\n=== coding_env validation PASSED ===\n")
+    return True
+
+
 def validate_generic_env(url: str, env_name: str) -> bool:
     """Generic validation for environments without specific validators.
 
@@ -482,6 +618,10 @@ VALIDATORS = {
     "openspiel_env": validate_openspiel_env,
     "atari_env": validate_atari_env,
     "dm_control_env": validate_dm_control_env,
+    "wildfire_env": validate_wildfire_env,
+    "reasoning_gym_env": validate_reasoning_gym_env,
+    "calendar_env": validate_calendar_env,
+    "coding_env": validate_coding_env,
 }
 
 

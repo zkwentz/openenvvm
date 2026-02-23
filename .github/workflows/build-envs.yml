@@ -115,6 +115,10 @@ jobs:
           - snake_env
           - chess_env
           - openspiel_env
+          - wildfire_env
+          - reasoning_gym_env
+          - calendar_env
+          - coding_env
 
     steps:
       - uses: actions/checkout@v4
