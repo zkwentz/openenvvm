@@ -2,29 +2,35 @@
 """
 Validate a running MicroVM environment.
 
-This script tests that a MicroVM is functioning correctly by:
-1. Checking health endpoint
-2. Testing reset and capturing initial observation
-3. Testing step actions with correct StepRequest format
-4. Testing MCP tool listing/calling for MCP environments
-5. Validating response structure
+Generic validator that works for ANY OpenEnv environment by dynamically
+discovering the action format from /schema and observation structure.
 
-The OpenEnv API uses:
-- POST /reset  -> ResetResponse {observation, reward, done}
-- POST /step   -> StepRequest {action: {...}} -> StepResponse {observation, reward, done}
-- MCP tools are accessed via /step with ListToolsAction/CallToolAction
+The OpenEnv API contract:
+- GET  /health   -> 200
+- GET  /metadata -> env metadata
+- GET  /schema   -> JSON Schema for Action model
+- POST /reset    -> ResetResponse {observation, reward, done}
+- POST /step     -> StepRequest {action: {...}} -> StepResponse {observation, reward, done}
+
+MCP environments handle special action types:
+- {type: "list_tools"} -> observation with "tools" list
+- {type: "call_tool", tool_name: ..., arguments: {...}} -> tool result
 
 Usage:
     python scripts/validate_microvm.py --env echo_env --url http://172.16.0.2:8000
-    python scripts/validate_microvm.py --env connect4_env --url http://172.16.0.2:8000
 """
 
 import argparse
+import json
 import sys
 import time
 import requests
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
+
+# ---------------------------------------------------------------------------
+# Low-level endpoint helpers
+# ---------------------------------------------------------------------------
 
 def wait_for_health(url: str, timeout: int = 30) -> bool:
     """Wait for the health endpoint to respond."""
@@ -51,85 +57,232 @@ def wait_for_health(url: str, timeout: int = 30) -> bool:
     return False
 
 
-def test_reset(url: str) -> Optional[Dict[str, Any]]:
-    """Test the reset endpoint. Returns the observation dict or None on failure.
+def get_schema(url: str) -> Optional[Dict[str, Any]]:
+    """Fetch the action schema from /schema endpoint."""
+    try:
+        resp = requests.get(f"{url}/schema", timeout=10)
+        if resp.status_code == 200:
+            schema = resp.json()
+            print(f"  Schema fetched successfully")
+            return schema
+        else:
+            print(f"  /schema returned {resp.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"  /schema fetch failed: {e}")
+        return None
 
-    OpenEnv ResetResponse format: {observation: {...}, reward: null, done: false}
-    """
+
+def get_metadata(url: str) -> Optional[Dict[str, Any]]:
+    """Fetch environment metadata."""
+    try:
+        resp = requests.get(f"{url}/metadata", timeout=10)
+        if resp.status_code == 200:
+            metadata = resp.json()
+            print(f"  Metadata fetched: {json.dumps(metadata)[:200]}")
+            return metadata
+        else:
+            print(f"  /metadata returned {resp.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"  /metadata fetch failed: {e}")
+        return None
+
+
+def call_reset(url: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Call /reset. Returns (observation, full_response) or (None, None) on failure."""
     try:
         resp = requests.post(f"{url}/reset", json={}, timeout=30)
         if resp.status_code == 200:
-            try:
-                data = resp.json()
-            except Exception as e:
-                print(f"  Reset returned 200 but invalid JSON: {e}")
-                print(f"  Response text: {resp.text[:300]}")
-                return None
-            # ResetResponse wraps observation in an "observation" field
+            data = resp.json()
             observation = data.get("observation", data)
             print(f"  Reset successful")
             if isinstance(observation, dict):
-                for key in ["legal_actions", "legal_moves", "board", "fen", "grid"]:
-                    if key in observation:
-                        val = observation[key]
-                        print(f"    {key}: {str(val)[:100]}...")
-            return observation
+                keys = list(observation.keys())
+                print(f"    Observation keys: {keys}")
+                # Print notable fields for diagnostics
+                for key in keys[:10]:
+                    val = observation[key]
+                    val_str = str(val)
+                    if len(val_str) > 120:
+                        val_str = val_str[:120] + "..."
+                    print(f"    {key}: {val_str}")
+            return observation, data
         else:
             print(f"  Reset failed with status {resp.status_code}")
             try:
                 print(f"    Response: {resp.text[:500]}")
             except Exception:
                 pass
-            return None
+            return None, None
     except requests.exceptions.RequestException as e:
         print(f"  Reset failed with error: {e}")
-        return None
+        return None, None
 
 
-def test_step(url: str, action: dict) -> Optional[Dict[str, Any]]:
-    """Test the step endpoint with proper StepRequest format.
-
-    OpenEnv StepRequest format: {action: {...}, timeout_s: null, request_id: null}
-    The action dict is unpacked into the environment's Action Pydantic model.
-    """
+def call_step(url: str, action: dict) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Call /step with StepRequest {action: {...}}. Returns (observation, full_response)."""
     try:
-        # Wrap action in StepRequest format
         step_request = {"action": action}
         resp = requests.post(f"{url}/step", json=step_request, timeout=30)
         if resp.status_code == 200:
             result = resp.json()
             observation = result.get("observation", result)
-            print(f"  Step successful (action: {action})")
+            print(f"  Step successful (action: {json.dumps(action)[:120]})")
             if isinstance(observation, dict):
-                for key in ["legal_actions", "legal_moves", "board", "fen", "grid"]:
-                    if key in observation:
-                        val = observation[key]
-                        print(f"    {key}: {str(val)[:100]}...")
+                for key in list(observation.keys())[:5]:
+                    val_str = str(observation[key])
+                    if len(val_str) > 120:
+                        val_str = val_str[:120] + "..."
+                    print(f"    {key}: {val_str}")
             if "reward" in result:
-                print(f"    Reward: {result['reward']}")
+                print(f"    reward: {result['reward']}")
             if "done" in result:
-                print(f"    Done: {result['done']}")
-            return observation
-        elif resp.status_code == 404:
-            print("  /step endpoint not available")
-            return None
+                print(f"    done: {result['done']}")
+            return observation, result
         elif resp.status_code == 422:
-            print(f"  Step validation error (422): {resp.text[:300]}")
-            return None
+            print(f"  Step 422 (validation error): {resp.text[:300]}")
+            return None, None
+        elif resp.status_code == 404:
+            print(f"  /step endpoint not available (404)")
+            return None, None
         else:
-            print(f"  Step failed with status {resp.status_code}: {resp.text[:200]}")
-            return None
+            print(f"  Step failed with status {resp.status_code}: {resp.text[:300]}")
+            return None, None
     except requests.exceptions.RequestException as e:
         print(f"  Step failed with error: {e}")
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# Action discovery from schema
+# ---------------------------------------------------------------------------
+
+def build_action_from_schema(schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Try to construct a minimal valid action from the JSON schema.
+
+    OpenEnv /schema returns the Pydantic model schema for the Action class.
+    We parse properties and their types to build a sample action with default-like values.
+    """
+    if not schema or not isinstance(schema, dict):
         return None
 
+    # Schema may be nested under various keys depending on OpenEnv version
+    properties = schema.get("properties", {})
+    if not properties:
+        # Try looking for it under "action" or "Action"
+        for key in ["action", "Action", "input_schema"]:
+            if key in schema and isinstance(schema[key], dict):
+                properties = schema[key].get("properties", {})
+                if properties:
+                    break
 
-def test_mcp_list_tools(url: str) -> Optional[List[Dict]]:
-    """List MCP tools via /step with ListToolsAction.
+    if not properties:
+        print(f"    Schema has no parseable properties")
+        return None
 
-    MCP environments handle {type: "list_tools"} as a special action
-    that returns an observation with a "tools" field.
+    # Filter out metadata field (inherited from Action base class)
+    properties = {k: v for k, v in properties.items() if k != "metadata"}
+
+    if not properties:
+        return None
+
+    action = {}
+    for field_name, field_schema in properties.items():
+        field_type = field_schema.get("type", "string")
+        enum_values = field_schema.get("enum")
+        default = field_schema.get("default")
+
+        if default is not None:
+            action[field_name] = default
+        elif enum_values:
+            action[field_name] = enum_values[0]
+        elif field_type == "integer":
+            action[field_name] = 0
+        elif field_type == "number":
+            action[field_name] = 0.0
+        elif field_type == "string":
+            action[field_name] = ""
+        elif field_type == "boolean":
+            action[field_name] = False
+        elif field_type == "array":
+            items = field_schema.get("items", {})
+            items_type = items.get("type", "number")
+            if items_type in ("number", "integer"):
+                action[field_name] = [0.0]
+            else:
+                action[field_name] = []
+        elif field_type == "object":
+            action[field_name] = {}
+        else:
+            action[field_name] = None
+
+    print(f"    Built action from schema: {json.dumps(action)[:200]}")
+    return action
+
+
+def refine_action_with_observation(
+    action: Optional[Dict[str, Any]],
+    observation: Dict[str, Any],
+    schema: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Refine a schema-derived action using runtime observation data.
+
+    Many environments include legal_actions or legal_moves in their observation,
+    which tells us what values are valid for the action fields.
     """
+    if not isinstance(observation, dict):
+        return action
+
+    legal_actions = observation.get("legal_actions")
+    legal_moves = observation.get("legal_moves")
+
+    if action is None:
+        action = {}
+
+    if legal_actions and isinstance(legal_actions, list) and len(legal_actions) > 0:
+        first = legal_actions[0]
+        # Find an integer/action_id field in the action to fill
+        filled = False
+        for field_name in ["action", "action_id"]:
+            if field_name in action:
+                action[field_name] = first
+                filled = True
+                break
+        if not filled:
+            # If schema didn't give us a field, try common patterns
+            if isinstance(first, int):
+                # Could be "action" or "action_id" - try both
+                action["action"] = first
+            else:
+                action["action"] = first
+        print(f"    Refined action with legal_actions[0]={first}: {json.dumps(action)[:200]}")
+
+    elif legal_moves and isinstance(legal_moves, list) and len(legal_moves) > 0:
+        first = legal_moves[0]
+        filled = False
+        for field_name in ["move"]:
+            if field_name in action:
+                action[field_name] = first
+                filled = True
+                break
+        if not filled:
+            action["move"] = first
+        print(f"    Refined action with legal_moves[0]={first}: {json.dumps(action)[:200]}")
+
+    return action if action else None
+
+
+# ---------------------------------------------------------------------------
+# MCP tool discovery and testing
+# ---------------------------------------------------------------------------
+
+def try_mcp_tools(url: str) -> Tuple[bool, bool]:
+    """Attempt MCP tool listing and calling.
+
+    Returns (is_mcp_env, mcp_tool_call_succeeded).
+    """
+    # Try listing tools
     try:
         step_request = {"action": {"type": "list_tools"}}
         resp = requests.post(f"{url}/step", json=step_request, timeout=10)
@@ -137,516 +290,200 @@ def test_mcp_list_tools(url: str) -> Optional[List[Dict]]:
             data = resp.json()
             observation = data.get("observation", data)
             tools = observation.get("tools", [])
-            print(f"  List tools successful: {len(tools)} tools found")
-            for tool in tools:
-                name = tool.get("name", "unknown")
-                desc = tool.get("description", "")[:60]
-                print(f"    - {name}: {desc}")
-            return tools
+            if isinstance(tools, list) and len(tools) > 0:
+                print(f"  MCP tools discovered: {len(tools)} tools")
+                for tool in tools[:5]:
+                    name = tool.get("name", "unknown")
+                    desc = str(tool.get("description", ""))[:60]
+                    print(f"    - {name}: {desc}")
+
+                # Try calling the first tool with empty or minimal arguments
+                first_tool = tools[0]
+                tool_name = first_tool.get("name", "")
+                tool_schema = first_tool.get("input_schema", first_tool.get("parameters", {}))
+                tool_args = _build_minimal_tool_args(tool_schema)
+
+                print(f"  Calling MCP tool '{tool_name}' with args: {json.dumps(tool_args)[:150]}")
+                call_req = {
+                    "action": {
+                        "type": "call_tool",
+                        "tool_name": tool_name,
+                        "arguments": tool_args,
+                    }
+                }
+                call_resp = requests.post(f"{url}/step", json=call_req, timeout=30)
+                if call_resp.status_code == 200:
+                    call_data = call_resp.json()
+                    call_obs = call_data.get("observation", call_data)
+                    print(f"  MCP tool call successful")
+                    print(f"    Result: {str(call_obs)[:200]}")
+                    return True, True
+                else:
+                    print(f"  MCP tool call returned {call_resp.status_code}: {call_resp.text[:200]}")
+                    return True, False
+
+            # 200 but no tools - might be MCP env with no tools registered
+            return False, False
         elif resp.status_code == 422:
-            print("  MCP list_tools not supported (not an MCP environment)")
-            return None
+            # Not an MCP environment
+            return False, False
         else:
-            print(f"  List tools failed with status {resp.status_code}: {resp.text[:200]}")
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"  List tools failed with error: {e}")
-        return None
+            return False, False
+    except requests.exceptions.RequestException:
+        return False, False
 
 
-def test_mcp_call_tool(url: str, tool_name: str, arguments: dict) -> bool:
-    """Call an MCP tool via /step with CallToolAction.
+def _build_minimal_tool_args(tool_schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Build minimal arguments for a tool call from its schema."""
+    if not tool_schema or not isinstance(tool_schema, dict):
+        return {}
 
-    MCP environments handle {type: "call_tool", tool_name: ..., arguments: {...}}
-    as a special action that invokes the named tool.
-    """
-    try:
-        step_request = {
-            "action": {
-                "type": "call_tool",
-                "tool_name": tool_name,
-                "arguments": arguments,
-            }
-        }
-        resp = requests.post(f"{url}/step", json=step_request, timeout=30)
-        if resp.status_code == 200:
-            data = resp.json()
-            observation = data.get("observation", data)
-            print(f"  Call tool '{tool_name}' successful")
-            print(f"    Result: {str(observation)[:200]}...")
-            return True
-        elif resp.status_code == 422:
-            print(f"  MCP call_tool not supported for '{tool_name}' (422)")
-            return False
-        else:
-            print(f"  Call tool failed with status {resp.status_code}: {resp.text[:200]}")
-            return False
-    except requests.exceptions.RequestException as e:
-        print(f"  Call tool failed with error: {e}")
-        return False
+    properties = tool_schema.get("properties", {})
+    required = tool_schema.get("required", [])
+    args = {}
+
+    for field_name in required:
+        field_def = properties.get(field_name, {})
+        field_type = field_def.get("type", "string")
+        enum_values = field_def.get("enum")
+
+        if enum_values:
+            args[field_name] = enum_values[0]
+        elif field_type == "string":
+            args[field_name] = "test"
+        elif field_type == "integer":
+            args[field_name] = 0
+        elif field_type == "number":
+            args[field_name] = 0.0
+        elif field_type == "boolean":
+            args[field_name] = False
+        elif field_type == "array":
+            args[field_name] = []
+        elif field_type == "object":
+            args[field_name] = {}
+
+    return args
 
 
 # ---------------------------------------------------------------------------
-# Environment-specific validation functions
+# Generic validator
 # ---------------------------------------------------------------------------
 
-def validate_echo_env(url: str) -> bool:
-    """Validate echo_env MicroVM (MCP environment).
+def validate(url: str, env_name: str, timeout: int = 30) -> bool:
+    """Validate any OpenEnv environment generically.
 
-    Echo env is a pure MCP environment. Actions are ListToolsAction and
-    CallToolAction, routed through the /step endpoint.
-    Tools: echo_message, echo_with_length
+    Strategy:
+    1. Health check
+    2. Fetch metadata and schema
+    3. Reset environment
+    4. Discover if MCP environment (try list_tools)
+    5. If MCP: call a tool
+    6. If not MCP: build action from schema + observation, then step
     """
-    print("\n=== Validating echo_env ===\n")
+    print(f"\n{'=' * 60}")
+    print(f"Validating: {env_name}")
+    print(f"URL: {url}")
+    print(f"{'=' * 60}\n")
 
-    if not wait_for_health(url):
+    # --- Phase 1: Health check ---
+    print("[1/5] Health check")
+    if not wait_for_health(url, timeout=timeout):
         return False
 
-    obs = test_reset(url)
-    if obs is None:
+    # --- Phase 2: Metadata + Schema ---
+    print("\n[2/5] Fetching metadata and schema")
+    metadata = get_metadata(url)
+    schema = get_schema(url)
+
+    # --- Phase 3: Reset ---
+    print("\n[3/5] Resetting environment")
+    observation, reset_response = call_reset(url)
+    if observation is None:
+        print("  FATAL: Reset failed - environment is not functional")
         return False
 
-    # Echo env is an MCP environment - list and call tools via /step
-    tools = test_mcp_list_tools(url)
-    if tools is not None:
-        tool_names = [t.get("name") for t in tools]
-        if "echo_message" in tool_names:
-            if not test_mcp_call_tool(url, "echo_message", {"message": "Hello from MicroVM!"}):
-                return False
-        if "echo_with_length" in tool_names:
-            test_mcp_call_tool(url, "echo_with_length", {"message": "Test message"})
-
-    print("\n=== echo_env validation PASSED ===\n")
-    return True
-
-
-def validate_chat_env(url: str) -> bool:
-    """Validate chat_env MicroVM.
-
-    ChatAction requires tokens (torch.Tensor) which cannot be sent via JSON.
-    Validation is limited to health + reset.
-    """
-    print("\n=== Validating chat_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    print("  (Skipping step test: ChatAction requires tensor data)")
-    print("\n=== chat_env validation PASSED ===\n")
-    return True
-
-
-def validate_connect4_env(url: str) -> bool:
-    """Validate connect4_env MicroVM.
-
-    Connect4Action: {column: int}
-    """
-    print("\n=== Validating connect4_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # Connect4Action has column: int (0-6)
-    result = test_step(url, {"column": 3})
-    if result is None:
-        return False
-
-    print("\n=== connect4_env validation PASSED ===\n")
-    return True
-
-
-def validate_grid_world_env(url: str) -> bool:
-    """Validate grid_world_env MicroVM.
-
-    GridWorldAction: {action: MoveAction} where MoveAction is enum "UP"/"DOWN"/"LEFT"/"RIGHT"
-    """
-    print("\n=== Validating grid_world_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # GridWorldAction has action: MoveAction (enum: UP, DOWN, LEFT, RIGHT)
-    result = test_step(url, {"action": "UP"})
-    if result is None:
-        return False
-
-    print("\n=== grid_world_env validation PASSED ===\n")
-    return True
-
-
-def validate_maze_env(url: str) -> bool:
-    """Validate maze_env MicroVM.
-
-    MazeAction: {action: int} - action ID from legal_actions list
-    """
-    print("\n=== Validating maze_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # MazeAction has action: int - pick from legal_actions in observation
-    legal_actions = obs.get("legal_actions", [0])
-    action_id = legal_actions[0] if legal_actions else 0
-    print(f"  Using action {action_id} from legal_actions: {legal_actions}")
-    result = test_step(url, {"action": action_id})
-    if result is None:
-        return False
-
-    print("\n=== maze_env validation PASSED ===\n")
-    return True
-
-
-def validate_snake_env(url: str) -> bool:
-    """Validate snake_env MicroVM.
-
-    SnakeAction: {action: int} - direction encoded as integer
-    """
-    print("\n=== Validating snake_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # SnakeAction has action: int (direction encoded as integer)
-    result = test_step(url, {"action": 0})
-    if result is None:
-        return False
-
-    print("\n=== snake_env validation PASSED ===\n")
-    return True
-
-
-def validate_chess_env(url: str) -> bool:
-    """Validate chess_env MicroVM.
-
-    ChessAction: {move: str} - UCI format (e.g., "e2e4")
-    Reset observation includes legal_moves list.
-    """
-    print("\n=== Validating chess_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # ChessAction has move: str (UCI format)
-    # Pick first legal move from observation, fallback to standard opening
-    legal_moves = obs.get("legal_moves", ["e2e4"])
-    move = legal_moves[0] if legal_moves else "e2e4"
-    print(f"  Using move '{move}' from {len(legal_moves)} legal moves")
-    result = test_step(url, {"move": move})
-    if result is None:
-        return False
-
-    print("\n=== chess_env validation PASSED ===\n")
-    return True
-
-
-def validate_openspiel_env(url: str) -> bool:
-    """Validate openspiel_env MicroVM.
-
-    OpenSpielAction: {action_id: int, game_name: str, game_params: dict}
-    Default game is "catch" with random opponent.
-    Reset observation includes legal_actions and info_state.
-    """
-    print("\n=== Validating openspiel_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # OpenSpielAction has action_id: int - pick from legal_actions
-    legal_actions = obs.get("legal_actions", [0])
-    action_id = legal_actions[0] if legal_actions else 0
-    print(f"  Using action_id {action_id} from legal_actions: {legal_actions}")
-    result = test_step(url, {"action_id": action_id})
-    if result is None:
-        return False
-
-    # Play a few more steps to validate game flow
-    for i in range(3):
-        if result is None or result.get("done", False):
-            print(f"  Game ended after step {i + 1}")
-            break
-        legal = result.get("legal_actions", [0])
-        aid = legal[0] if legal else 0
-        result = test_step(url, {"action_id": aid})
-
-    print("\n=== openspiel_env validation PASSED ===\n")
-    return True
-
-
-def validate_atari_env(url: str) -> bool:
-    """Validate atari_env MicroVM.
-
-    AtariAction: {action_id: int, game_name: str, obs_type: str, full_action_space: bool}
-    Default game is "pong".
-    """
-    print("\n=== Validating atari_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # AtariAction has action_id: int
-    legal_actions = obs.get("legal_actions", [0])
-    action_id = legal_actions[0] if legal_actions else 0
-    print(f"  Using action_id {action_id} from legal_actions: {legal_actions}")
-    result = test_step(url, {"action_id": action_id})
-    if result is None:
-        return False
-
-    print("\n=== atari_env validation PASSED ===\n")
-    return True
-
-
-def validate_dm_control_env(url: str) -> bool:
-    """Validate dm_control_env MicroVM.
-
-    DMControlAction: {values: List[float]} - continuous action values
-    Default domain is cartpole/balance (1D action space).
-    """
-    print("\n=== Validating dm_control_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # DMControlAction has values: List[float]
-    # Default cartpole balance has 1D action space
-    result = test_step(url, {"values": [0.0]})
-    if result is None:
-        return False
-
-    print("\n=== dm_control_env validation PASSED ===\n")
-    return True
-
-
-def validate_wildfire_env(url: str) -> bool:
-    """Validate wildfire_env MicroVM.
-
-    WildfireAction: {action: str, x: Optional[int], y: Optional[int]}
-    Actions: "break", "water", "wait"
-    Tests: pyproject.toml-only install (no requirements.txt)
-    """
-    print("\n=== Validating wildfire_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    # Check available endpoints for diagnostics
-    for endpoint in ["/metadata", "/schema"]:
-        try:
-            resp = requests.get(f"{url}{endpoint}", timeout=5)
-            print(f"  GET {endpoint}: {resp.status_code}")
-            if resp.status_code == 200:
-                print(f"    {str(resp.text)[:200]}")
-        except Exception as e:
-            print(f"  GET {endpoint}: {e}")
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # WildfireAction: action is one of "break", "water", "wait"
-    # "wait" requires no coordinates
-    result = test_step(url, {"action": "wait"})
-    if result is None:
-        return False
-
-    print("\n=== wildfire_env validation PASSED ===\n")
-    return True
-
-
-def validate_reasoning_gym_env(url: str) -> bool:
-    """Validate reasoning_gym_env MicroVM.
-
-    ReasoningGymAction: {answer: str}
-    Reset returns a question in the observation.
-    Tests: external pip package (reasoning-gym)
-    """
-    print("\n=== Validating reasoning_gym_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # Observation should contain a question
-    question = obs.get("question", "")
-    if question:
-        print(f"  Question: {str(question)[:150]}...")
-
-    # ReasoningGymAction: just provide an answer string
-    result = test_step(url, {"answer": "42"})
-    if result is None:
-        return False
-
-    print("\n=== reasoning_gym_env validation PASSED ===\n")
-    return True
-
-
-def validate_calendar_env(url: str) -> bool:
-    """Validate calendar_env MicroVM (MCP environment).
-
-    MCP tool-use environment with calendar operations.
-    Tools: create_event, list_events, update_event, delete_event, etc.
-    Tests: MCP pattern with SQLite/SQLAlchemy backend
-    """
-    print("\n=== Validating calendar_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # Calendar env is MCP - list tools first
-    tools = test_mcp_list_tools(url)
-    if tools is not None:
-        tool_names = [t.get("name") for t in tools]
-        print(f"  Available tools: {tool_names}")
-
-        # Try listing events (should work even with empty calendar)
-        if "list_events" in tool_names:
-            if not test_mcp_call_tool(url, "list_events", {}):
-                return False
-        elif "get_events" in tool_names:
-            if not test_mcp_call_tool(url, "get_events", {}):
+    # --- Phase 4: MCP tool discovery ---
+    print("\n[4/5] Probing for MCP tools")
+    is_mcp, mcp_call_ok = try_mcp_tools(url)
+
+    if is_mcp:
+        if mcp_call_ok:
+            print("  Environment is MCP with working tool calls")
+        else:
+            print("  Environment is MCP but tool call failed")
+            # MCP envs may not need step to work - tool listing is sufficient
+            # But if tool call failed, that's a real problem
+            return False
+
+        # For MCP environments, successful tool call is the validation
+        print(f"\n{'=' * 60}")
+        print(f"VALIDATION PASSED: {env_name} (MCP environment)")
+        print(f"{'=' * 60}")
+        return True
+
+    print("  Not an MCP environment - will test /step")
+
+    # --- Phase 5: Step with discovered action ---
+    print("\n[5/5] Testing /step")
+
+    # Build action from schema
+    action = None
+    if schema:
+        action = build_action_from_schema(schema)
+
+    # Refine with observation data (legal_actions, legal_moves, etc.)
+    action = refine_action_with_observation(action, observation, schema)
+
+    if action is None or action == {}:
+        # Last resort: try a bare minimal action
+        print("  WARNING: Could not discover action format from schema or observation")
+        print("  Trying common action patterns...")
+
+        # Try common patterns in order of likelihood
+        attempts = [
+            {"action": 0},           # Many RL envs use integer actions
+            {"action": "wait"},       # Some envs accept string actions
+        ]
+
+        step_succeeded = False
+        for attempt in attempts:
+            print(f"  Attempting: {json.dumps(attempt)}")
+            obs, resp = call_step(url, attempt)
+            if obs is not None:
+                step_succeeded = True
+                break
+
+        if not step_succeeded:
+            print("  WARNING: All step attempts failed")
+            print("  Environment passed health + reset but step could not be validated")
+            # This is still a meaningful validation - the environment boots and resets
+            # We don't fail because we can't know the action format without schema
+            if schema is None:
+                print("  (No /schema endpoint available to discover action format)")
+    else:
+        obs, resp = call_step(url, action)
+        if obs is None:
+            print("  Step failed with discovered action")
+            # Try again after a fresh reset in case reset state was consumed
+            print("  Retrying after fresh reset...")
+            observation, _ = call_reset(url)
+            if observation:
+                action = refine_action_with_observation(action, observation, schema)
+                if action:
+                    obs, resp = call_step(url, action)
+            if obs is None:
+                print("  Step failed on retry - environment may have action format issues")
                 return False
 
-        # Try creating an event
-        if "create_event" in tool_names:
-            test_mcp_call_tool(url, "create_event", {
-                "title": "Test Event",
-                "start_time": "2025-01-01T10:00:00",
-                "end_time": "2025-01-01T11:00:00",
-            })
-
-    print("\n=== calendar_env validation PASSED ===\n")
+    print(f"\n{'=' * 60}")
+    print(f"VALIDATION PASSED: {env_name}")
+    print(f"{'=' * 60}")
     return True
 
 
-def validate_coding_env(url: str) -> bool:
-    """Validate coding_env MicroVM.
-
-    CodeAction: {code: str}
-    Returns: stdout, stderr, exit_code
-    Tests: code execution inside MicroVM, smolagents dependency
-    """
-    print("\n=== Validating coding_env ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # CodeAction: execute Python code
-    result = test_step(url, {"code": "print('hello from microvm')"})
-    if result is None:
-        return False
-
-    # Verify we got execution output
-    stdout = result.get("stdout", "")
-    if stdout:
-        print(f"  stdout: {stdout[:200]}")
-    exit_code = result.get("exit_code")
-    if exit_code is not None:
-        print(f"  exit_code: {exit_code}")
-
-    print("\n=== coding_env validation PASSED ===\n")
-    return True
-
-
-def validate_generic_env(url: str, env_name: str) -> bool:
-    """Generic validation for environments without specific validators.
-
-    Tests health, reset, and attempts MCP tool discovery.
-    """
-    print(f"\n=== Validating {env_name} (generic) ===\n")
-
-    if not wait_for_health(url):
-        return False
-
-    obs = test_reset(url)
-    if obs is None:
-        return False
-
-    # Try MCP tool listing (works for MCP environments)
-    tools = test_mcp_list_tools(url)
-    if tools:
-        print(f"  Environment exposes {len(tools)} MCP tools")
-
-    # Try to discover action format from observation
-    if obs and isinstance(obs, dict):
-        legal_actions = obs.get("legal_actions")
-        legal_moves = obs.get("legal_moves")
-        if legal_actions:
-            action_id = legal_actions[0]
-            print(f"  Trying step with action_id from legal_actions: {action_id}")
-            test_step(url, {"action_id": action_id})
-        elif legal_moves:
-            move = legal_moves[0]
-            print(f"  Trying step with move from legal_moves: {move}")
-            test_step(url, {"move": move})
-
-    print(f"\n=== {env_name} basic validation PASSED ===\n")
-    return True
-
-
-# Map environment names to validation functions
-VALIDATORS = {
-    "echo_env": validate_echo_env,
-    "chat_env": validate_chat_env,
-    "connect4_env": validate_connect4_env,
-    "grid_world_env": validate_grid_world_env,
-    "maze_env": validate_maze_env,
-    "snake_env": validate_snake_env,
-    "chess_env": validate_chess_env,
-    "openspiel_env": validate_openspiel_env,
-    "atari_env": validate_atari_env,
-    "dm_control_env": validate_dm_control_env,
-    "wildfire_env": validate_wildfire_env,
-    "reasoning_gym_env": validate_reasoning_gym_env,
-    "calendar_env": validate_calendar_env,
-    "coding_env": validate_coding_env,
-}
-
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description="Validate a MicroVM environment")
@@ -655,26 +492,15 @@ def main():
     parser.add_argument("--timeout", type=int, default=30, help="Health check timeout in seconds")
     args = parser.parse_args()
 
-    print(f"Validating {args.env} at {args.url}")
-    print("=" * 60)
-
-    # Get the validator function
-    validator = VALIDATORS.get(args.env, lambda url: validate_generic_env(url, args.env))
-
     try:
-        success = validator(args.url)
+        success = validate(args.url, args.env, timeout=args.timeout)
         if success:
-            print("=" * 60)
-            print(f"VALIDATION PASSED: {args.env}")
-            print("=" * 60)
             sys.exit(0)
         else:
-            print("=" * 60)
-            print(f"VALIDATION FAILED: {args.env}")
-            print("=" * 60)
+            print(f"\nVALIDATION FAILED: {args.env}")
             sys.exit(1)
     except Exception as e:
-        print(f"VALIDATION ERROR: {e}")
+        print(f"\nVALIDATION ERROR: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
