@@ -99,8 +99,7 @@ jobs:
           retention-days: 7
 
   # Test the MicroVMs with Firecracker (requires KVM)
-  # Tests environments that have validation scripts
-  # Full validation tests (environments with working server implementations)
+  # Generic validator discovers action format from /schema, observation, and 422 probing
   test-env:
     needs: build-env
     runs-on: ubuntu-latest
@@ -108,13 +107,34 @@ jobs:
       fail-fast: false
       matrix:
         env:
-          - echo_env
-          - connect4_env
-          - grid_world_env
-          - maze_env
-          - wildfire_env
+          - atari_env
+          - browsergym_env
           - calendar_env
+          - chat_env
+          - chess_env
           - coding_env
+          - connect4_env
+          - dipg_safety_env
+          - dm_control_env
+          - echo_env
+          - finqa_env
+          - finrl_env
+          - git_env
+          - grid_world_env
+          - julia_env
+          - kernrl
+          - maze_env
+          - openapp_env
+          - openspiel_env
+          - reasoning_gym_env
+          - repl_env
+          - snake_env
+          - sumo_rl_env
+          - tbench2_env
+          - textarena_env
+          - unity_env
+          - websearch_env
+          - wildfire_env
 
     steps:
       - uses: actions/checkout@v4
@@ -259,10 +279,6 @@ jobs:
           if [ -f /tmp/vm.pid ]; then
             sudo kill $(cat /tmp/vm.pid) 2>/dev/null || true
           fi
-
-  # NOTE: Some environments (finqa_env, repl_env, textarena_env, calendar_env)
-  # are excluded from test-env due to missing Python modules in upstream OpenEnv.
-  # chess_env and openspiel_env re-added with proper validation scripts.
 
   # Summary job - reports results and fails if any upstream job failed
   summary:
