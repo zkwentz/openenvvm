@@ -11,7 +11,7 @@ use tempfile::TempDir;
 const DEFAULT_KERNEL_URL: &str =
     "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.6/x86_64/vmlinux-5.10.198";
 
-/// Builder Docker image (Alpine with necessary tools)
+/// Builder Docker image for the finalize phase (ext4 creation only)
 const BUILDER_IMAGE: &str = "alpine:3.19";
 
 /// Firecracker VM configuration
@@ -102,7 +102,7 @@ pub fn convert_env_to_microvm(
     // Step 2: Build rootfs using Docker
     println!("  Building rootfs (this may take a moment)...");
     let rootfs_path = output.join("rootfs.ext4");
-    build_rootfs_docker(&env_dir, &rootfs_path, 2048)?;
+    build_rootfs_docker(&env_dir, &rootfs_path, 4096)?;
 
     // Step 3: Handle kernel
     println!("  Downloading kernel...");
@@ -204,29 +204,36 @@ fn build_rootfs_docker(env_dir: &Path, output_path: &Path, size_mb: u32) -> Resu
     let env_name = env_dir.file_name().unwrap().to_str().unwrap();
 
     // Create a Dockerfile for the build
-    // Install openenv_core which is required by most OpenEnv environments
+    // Uses Debian slim for glibc compatibility with native Python packages
     let dockerfile = format!(
-        r#"FROM alpine:3.19
-RUN apk add --no-cache python3 py3-pip git iproute2 \
-    build-base python3-dev libffi-dev
-RUN pip3 install --break-system-packages uvicorn fastapi
+        r#"FROM python:3.11-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git iproute2 build-essential python3-dev libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uvicorn fastapi
 
 # Install openenv from the OpenEnv repository (provides openenv.core module)
-RUN pip3 install --break-system-packages git+https://github.com/meta-pytorch/OpenEnv.git || true
+RUN pip install --no-cache-dir git+https://github.com/meta-pytorch/OpenEnv.git || true
 
 COPY {env_name} /app/env
+
 # Install env deps from requirements.txt if available
 RUN if [ -f /app/env/server/requirements.txt ]; then \
-        pip3 install --break-system-packages -r /app/env/server/requirements.txt || true; \
+        pip install --no-cache-dir -r /app/env/server/requirements.txt || true; \
     fi
-# Install from pyproject.toml (use --no-deps to avoid re-resolving openenv-core)
+
+# Install from pyproject.toml (use --no-deps first to avoid re-resolving openenv-core)
 RUN if [ -f /app/env/pyproject.toml ]; then \
-        pip3 install --break-system-packages --no-deps /app/env || true; \
+        pip install --no-cache-dir --no-deps /app/env || true; \
     fi
+
 # Install pyproject.toml dependencies separately (skip already-installed openenv packages)
 RUN if [ -f /app/env/pyproject.toml ]; then \
-        pip3 install --break-system-packages /app/env 2>/dev/null || true; \
+        pip install --no-cache-dir /app/env 2>/dev/null || true; \
     fi
+
 RUN printf '#!/bin/sh\n\
 echo "MicroVM init starting..."\n\
 \n\
