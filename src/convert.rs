@@ -230,17 +230,21 @@ RUN if [ -f /app/env/pyproject.toml ]; then \
         pip install --no-cache-dir --no-deps /app/env || true; \
     fi
 
-# Install pyproject.toml dependencies individually (skipping openenv-related packages
-# which are already installed from git and cause resolution failures)
+# Try full install first (works when all deps resolve cleanly)
+RUN if [ -f /app/env/pyproject.toml ]; then \
+        pip install --no-cache-dir /app/env 2>/dev/null || true; \
+    fi
+
+# Fallback: install deps individually from pyproject.toml, skipping openenv packages
+# that cause resolution failures (already installed from git)
 RUN if [ -f /app/env/pyproject.toml ]; then \
         python3 -c " \
-import tomllib, sys; \
+import tomllib; \
 data = tomllib.load(open('/app/env/pyproject.toml', 'rb')); \
 deps = data.get('project', {{}}).get('dependencies', []); \
 [print(d) for d in deps if 'openenv' not in d.lower()] \
 " 2>/dev/null | while read -r dep; do \
-            echo \"Installing: $dep\"; \
-            pip install --no-cache-dir \"$dep\" 2>&1 || echo \"WARN: Failed to install $dep\"; \
+            pip install --no-cache-dir \"$dep\" 2>/dev/null || true; \
         done; \
     fi
 
