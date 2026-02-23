@@ -112,6 +112,9 @@ jobs:
           - connect4_env
           - grid_world_env
           - maze_env
+          - snake_env
+          - chess_env
+          - openspiel_env
 
     steps:
       - uses: actions/checkout@v4
@@ -235,9 +238,9 @@ jobs:
             sudo kill $(cat /tmp/vm.pid) 2>/dev/null || true
           fi
 
-  # NOTE: test-env-basic job removed - all 5 environments (chess_env, finqa_env,
-  # repl_env, textarena_env, calendar_env) fail due to missing Python modules
-  # in upstream OpenEnv container images. Re-add when upstream deps are fixed.
+  # NOTE: Some environments (finqa_env, repl_env, textarena_env, calendar_env)
+  # are excluded from test-env due to missing Python modules in upstream OpenEnv.
+  # chess_env and openspiel_env re-added with proper validation scripts.
 
   # Summary job - reports results and fails if any upstream job failed
   summary:
