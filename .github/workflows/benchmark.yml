@@ -91,6 +91,7 @@ jobs:
 
       - name: Run sandbox-bench - All providers
         id: benchmark
+        continue-on-error: true
         env:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
