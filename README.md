@@ -44,9 +44,9 @@ sudo mv release-v1.6.0-*/firecracker-v1.6.0-* /usr/local/bin/firecracker
 
 ## Supported Environments
 
-All 28 OpenEnv environments build successfully:
+11 of 28 OpenEnv environments fully convert, boot, and pass validation. The remaining environments have upstream issues (missing dependency files, external service requirements, or native binary dependencies). See [COMPATIBILITY.md](COMPATIBILITY.md) for details on each environment and what needs to change upstream.
 
-atari_env, browsergym_env, calendar_env, chat_env, chess_env, coding_env, connect4_env, dipg_safety_env, dm_control_env, echo_env, finqa_env, finrl_env, git_env, grid_world_env, julia_env, kernrl, maze_env, openapp_env, openspiel_env, reasoning_gym_env, repl_env, snake_env, sumo_rl_env, tbench2_env, textarena_env, unity_env, websearch_env, wildfire_env
+**Fully working:** atari_env, calendar_env, coding_env, connect4_env, echo_env, grid_world_env, julia_env, maze_env, reasoning_gym_env, repl_env, wildfire_env
 
 ## How It Works
 
@@ -58,7 +58,7 @@ atari_env, browsergym_env, calendar_env, chat_env, chess_env, coding_env, connec
 OpenEnv Directory          MicroVM Package           Running VM
 ┌─────────────┐            ┌─────────────┐           ┌─────────────┐
 │ server/     │  convert   │ rootfs.ext4 │   run     │ Linux 5.10  │
-│ models.py   │ ────────►  │ vmlinux     │ ───────►  │ Alpine 3.19 │
+│ models.py   │ ────────►  │ vmlinux     │ ───────►  │ Debian slim │
 │ client.py   │            │ config.json │           │ uvicorn:8000│
 └─────────────┘            └─────────────┘           └─────────────┘
 ```
