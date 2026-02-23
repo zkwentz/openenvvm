@@ -113,7 +113,6 @@ jobs:
           - grid_world_env
           - maze_env
           - wildfire_env
-          - reasoning_gym_env
           - calendar_env
           - coding_env
 

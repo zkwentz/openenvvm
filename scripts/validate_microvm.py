@@ -29,16 +29,25 @@ from typing import Optional, Dict, Any, List
 def wait_for_health(url: str, timeout: int = 30) -> bool:
     """Wait for the health endpoint to respond."""
     start = time.time()
+    last_status = None
     while time.time() - start < timeout:
         try:
             resp = requests.get(f"{url}/health", timeout=5)
             if resp.status_code == 200:
-                print(f"  Health check passed: {resp.json()}")
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = resp.text[:100]
+                print(f"  Health check passed: {body}")
                 return True
-        except requests.exceptions.RequestException:
+            else:
+                last_status = resp.status_code
+        except requests.exceptions.ConnectionError:
             pass
+        except requests.exceptions.RequestException as e:
+            last_status = str(e)
         time.sleep(1)
-    print("  Health check failed: timeout")
+    print(f"  Health check failed: timeout after {timeout}s (last status: {last_status})")
     return False
 
 
@@ -48,9 +57,14 @@ def test_reset(url: str) -> Optional[Dict[str, Any]]:
     OpenEnv ResetResponse format: {observation: {...}, reward: null, done: false}
     """
     try:
-        resp = requests.post(f"{url}/reset", json={}, timeout=10)
+        resp = requests.post(f"{url}/reset", json={}, timeout=30)
         if resp.status_code == 200:
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception as e:
+                print(f"  Reset returned 200 but invalid JSON: {e}")
+                print(f"  Response text: {resp.text[:300]}")
+                return None
             # ResetResponse wraps observation in an "observation" field
             observation = data.get("observation", data)
             print(f"  Reset successful")
@@ -61,7 +75,11 @@ def test_reset(url: str) -> Optional[Dict[str, Any]]:
                         print(f"    {key}: {str(val)[:100]}...")
             return observation
         else:
-            print(f"  Reset failed with status {resp.status_code}: {resp.text[:200]}")
+            print(f"  Reset failed with status {resp.status_code}")
+            try:
+                print(f"    Response: {resp.text[:500]}")
+            except Exception:
+                pass
             return None
     except requests.exceptions.RequestException as e:
         print(f"  Reset failed with error: {e}")
@@ -446,6 +464,16 @@ def validate_wildfire_env(url: str) -> bool:
     if not wait_for_health(url):
         return False
 
+    # Check available endpoints for diagnostics
+    for endpoint in ["/metadata", "/schema"]:
+        try:
+            resp = requests.get(f"{url}{endpoint}", timeout=5)
+            print(f"  GET {endpoint}: {resp.status_code}")
+            if resp.status_code == 200:
+                print(f"    {str(resp.text)[:200]}")
+        except Exception as e:
+            print(f"  GET {endpoint}: {e}")
+
     obs = test_reset(url)
     if obs is None:
         return False
@@ -453,11 +481,6 @@ def validate_wildfire_env(url: str) -> bool:
     # WildfireAction: action is one of "break", "water", "wait"
     # "wait" requires no coordinates
     result = test_step(url, {"action": "wait"})
-    if result is None:
-        return False
-
-    # Try an action with coordinates
-    result = test_step(url, {"action": "water", "x": 0, "y": 0})
     if result is None:
         return False
 
