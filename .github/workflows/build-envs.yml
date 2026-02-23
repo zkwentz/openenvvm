@@ -312,12 +312,12 @@ jobs:
           echo "=== Config.json ==="
           cat ${{ matrix.env }}.microvm/config.json
 
-      - name: Test ${{ matrix.env }} MicroVM (basic)
+      - name: Start ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
         run: |
           # Start the VM in background, capturing output
           sudo ./bin/openenvvm run ${{ matrix.env }}.microvm --port 8000 > /tmp/vm.log 2>&1 &
-          VM_PID=$!
+          echo $! > /tmp/vm.pid
 
           # Wait for VM to boot
           sleep 20
@@ -326,54 +326,53 @@ jobs:
           echo "=== VM Output ==="
           cat /tmp/vm.log || true
 
-          # Debug network
-          echo ""
+      - name: Debug network connectivity
+        if: steps.kvm.outputs.available == 'true'
+        run: |
           echo "=== Network debug ==="
           ip addr show tap0 || true
           ping -c 2 172.16.0.2 || true
           curl -v --connect-timeout 5 http://172.16.0.2:8000/health || true
 
-          # Run basic validation (generic validator)
+      - name: Validate ${{ matrix.env }} MicroVM
+        if: steps.kvm.outputs.available == 'true'
+        run: |
           python scripts/validate_microvm.py \
             --env ${{ matrix.env }} \
             --url http://172.16.0.2:8000 \
-            --timeout 60 || true
+            --timeout 60
 
-          # Cleanup
-          sudo kill $VM_PID 2>/dev/null || true
+      - name: Cleanup
+        if: always() && steps.kvm.outputs.available == 'true'
+        run: |
+          if [ -f /tmp/vm.pid ]; then
+            sudo kill $(cat /tmp/vm.pid) 2>/dev/null || true
+          fi
 
-  # Summary job
+  # Summary job - reports results and fails if any upstream job failed
   summary:
     needs: [build-env, test-env, test-env-basic]
     runs-on: ubuntu-latest
     if: always()
     steps:
+      - name: Check upstream job results
+        run: |
+          echo "build-env result: ${{ needs.build-env.result }}"
+          echo "test-env result: ${{ needs.test-env.result }}"
+          echo "test-env-basic result: ${{ needs.test-env-basic.result }}"
+
+          if [ "${{ needs.build-env.result }}" = "failure" ] || \
+             [ "${{ needs.test-env.result }}" = "failure" ] || \
+             [ "${{ needs.test-env-basic.result }}" = "failure" ]; then
+            echo "::error::One or more upstream jobs failed!"
+            exit 1
+          fi
+
       - name: Build Summary
         run: |
           echo "## MicroVM Build & Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All OpenEnv environments have been converted to MicroVM packages." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Build Results" >> $GITHUB_STEP_SUMMARY
-          echo "28 environments built and packaged as MicroVMs." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Validation Tests" >> $GITHUB_STEP_SUMMARY
-          echo "The following environments were validated with Firecracker:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Full validation (MCP tools + step):**" >> $GITHUB_STEP_SUMMARY
-          echo "- echo_env" >> $GITHUB_STEP_SUMMARY
-          echo "- chat_env" >> $GITHUB_STEP_SUMMARY
-          echo "- connect4_env" >> $GITHUB_STEP_SUMMARY
-          echo "- grid_world_env" >> $GITHUB_STEP_SUMMARY
-          echo "- maze_env" >> $GITHUB_STEP_SUMMARY
-          echo "- snake_env" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Basic validation (health + reset):**" >> $GITHUB_STEP_SUMMARY
-          echo "- chess_env" >> $GITHUB_STEP_SUMMARY
-          echo "- finqa_env" >> $GITHUB_STEP_SUMMARY
-          echo "- repl_env" >> $GITHUB_STEP_SUMMARY
-          echo "- textarena_env" >> $GITHUB_STEP_SUMMARY
-          echo "- calendar_env" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Download Artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "MicroVM packages are available as workflow artifacts (7-day retention)." >> $GITHUB_STEP_SUMMARY
+          echo "### Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "- build-env: ${{ needs.build-env.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- test-env: ${{ needs.test-env.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- test-env-basic: ${{ needs.test-env-basic.result }}" >> $GITHUB_STEP_SUMMARY

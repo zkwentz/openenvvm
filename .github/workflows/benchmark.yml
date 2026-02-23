@@ -123,7 +123,7 @@ jobs:
           fi
 
           echo "Running: sandbox-bench run $PROVIDERS --runs 3"
-          sandbox-bench run $PROVIDERS --runs 3 --output benchmark-results.json || true
+          sandbox-bench run $PROVIDERS --runs 3 --output benchmark-results.json
 
           if [ -f benchmark-results.json ]; then
             cat benchmark-results.json
