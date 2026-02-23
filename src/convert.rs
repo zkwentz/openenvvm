@@ -209,7 +209,8 @@ fn build_rootfs_docker(env_dir: &Path, output_path: &Path, size_mb: u32) -> Resu
         r#"FROM python:3.11-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git iproute2 build-essential python3-dev libffi-dev \
+    git iproute2 build-essential python3-dev libffi-dev swig \
+    cmake pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uvicorn fastapi
@@ -224,14 +225,23 @@ RUN if [ -f /app/env/server/requirements.txt ]; then \
         pip install --no-cache-dir -r /app/env/server/requirements.txt || true; \
     fi
 
-# Install from pyproject.toml (use --no-deps first to avoid re-resolving openenv-core)
+# Install the env package itself (without deps to avoid openenv-core resolution issues)
 RUN if [ -f /app/env/pyproject.toml ]; then \
         pip install --no-cache-dir --no-deps /app/env || true; \
     fi
 
-# Install pyproject.toml dependencies separately (skip already-installed openenv packages)
+# Install pyproject.toml dependencies individually (skipping openenv-related packages
+# which are already installed from git and cause resolution failures)
 RUN if [ -f /app/env/pyproject.toml ]; then \
-        pip install --no-cache-dir /app/env 2>/dev/null || true; \
+        python3 -c " \
+import tomllib, sys; \
+data = tomllib.load(open('/app/env/pyproject.toml', 'rb')); \
+deps = data.get('project', {{}}).get('dependencies', []); \
+[print(d) for d in deps if 'openenv' not in d.lower()] \
+" 2>/dev/null | while read -r dep; do \
+            echo \"Installing: $dep\"; \
+            pip install --no-cache-dir \"$dep\" 2>&1 || echo \"WARN: Failed to install $dep\"; \
+        done; \
     fi
 
 RUN printf '#!/bin/sh\n\
