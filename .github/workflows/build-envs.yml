@@ -247,11 +247,13 @@ jobs:
         if: steps.kvm.outputs.available == 'true'
         run: |
           echo "=== /health ==="
-          curl -s http://172.16.0.2:8000/health 2>&1 && echo
+          curl -s http://172.16.0.2:8000/health 2>&1 || echo "(no response)"
+          echo ""
           echo "=== /metadata ==="
-          curl -s http://172.16.0.2:8000/metadata 2>&1 && echo
+          curl -s http://172.16.0.2:8000/metadata 2>&1 || echo "(no response)"
+          echo ""
           echo "=== /reset ==="
-          curl -s -X POST http://172.16.0.2:8000/reset -H 'Content-Type: application/json' -d '{}' 2>&1 && echo
+          curl -s -X POST http://172.16.0.2:8000/reset -H 'Content-Type: application/json' -d '{}' 2>&1 || echo "(no response)"
 
       - name: Validate ${{ matrix.env }} MicroVM
         if: steps.kvm.outputs.available == 'true'
